@@ -1,5 +1,6 @@
 package dev.hermes.wearos.domain
 
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -76,6 +77,18 @@ object OrbDial {
      */
     const val ACTIVATE_REF = 51f
 
+    /**
+     * Lateral travel (ref px) per detent in SPIN mode (see [DialSpin]) — ≈13 mm at 340 dpi,
+     * deliberately smaller than the ~90 px arc between icons so a thumb sweep of a comfortable
+     * length clicks through several slots, and deliberate enough that an aim-drag's incidental
+     * sideways lean never engages the spin.
+     */
+    const val SPIN_STEP_REF = 34f
+
+    /** Spin only arms while the finger aims this far from 12:00 — the owner's exact hand posture
+     *  ("slide it up, then you can go right or left"); side/bottom drags stay pure aim. */
+    const val SPIN_UP_ARC_DEG = 65f
+
     /** Lower-arc bounds that trigger the contextual rise: the 4:30 / 6:00 / 7:30 wedges. */
     const val RISE_FROM_DEG = 112.5f
     const val RISE_TO_DEG = 247.5f
@@ -131,13 +144,27 @@ object OrbDial {
         return normDeg(angleOf(dxPx, dyPx)) in RISE_FROM_DEG..RISE_TO_DEG
     }
 
-    /** Ring icon center for a slot, VIEWPORT px, around the orb center (cx, cy). */
-    fun iconCenter(cxPx: Float, cyPx: Float, slot: Int, scale: Float): Pair<Float, Float> {
+    /**
+     * Ring icon center for a slot, VIEWPORT px, around the orb center (cx, cy). [phaseDeg]
+     * rotates the WHOLE ring (SPIN mode: the icons travel so the chosen slot arrives under the
+     * finger) — 0° keeps the dial exactly as aimed.
+     */
+    fun iconCenter(cxPx: Float, cyPx: Float, slot: Int, scale: Float, phaseDeg: Float = 0f): Pair<Float, Float> {
         val i = ((slot % SLOT_COUNT) + SLOT_COUNT) % SLOT_COUNT
-        val rad = Math.toRadians(i * SLOT_DEG.toDouble())
+        val rad = Math.toRadians((i * SLOT_DEG + phaseDeg).toDouble())
         val ring = ICON_RING_REF * scale
         return Pair(cxPx + (ring * sin(rad)).toFloat(), cyPx - (ring * cos(rad)).toFloat())
     }
+
+    /** Fold any angle to (−180, 180] — the shortest signed way between two ring positions. */
+    fun normDeg180(deg: Float): Float {
+        var d = normDeg(deg)
+        if (d > 180f) d -= 360f
+        return d
+    }
+
+    /** How far [angleDeg] sits from the center of a wedge, 0 = dead on, symmetric ≤180. */
+    fun wedgeDist(angleDeg: Float, centerDeg: Float): Float = abs(normDeg180(angleDeg - centerDeg))
 
     /** Risen orb center: face center, never downward (owner: "rise up towards more of the center"). */
     fun risenCenterY(cyPx: Float, viewportHPx: Float): Float =

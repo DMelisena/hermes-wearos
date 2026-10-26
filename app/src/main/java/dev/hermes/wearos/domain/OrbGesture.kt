@@ -63,11 +63,21 @@ object OrbGesture {
         var dy = 0f
             private set
 
-        /** Feed one pointer event (post-DOWN moves; DOWN itself may be replayed — harmless). */
+        /**
+         * Feed one pointer event (post-DOWN moves; DOWN itself may be replayed — harmless).
+         *
+         * THE RE-AIM FIX (owner batch 5: "if I go up… I should be able to move my finger over to
+         * one of the others — it only allows the direction you started in"): the hold timeout may
+         * only claim a gesture that has NOT armed the dial. Once armed, the dial owns the stream
+         * until the finger lifts — time passing must never freeze the vector, or the lane locks to
+         * whatever direction the finger happened to cross the gate at (~0.4 s in) and a mid-drag
+         * change of mind becomes impossible.
+         */
         fun move(x: Float, y: Float, tMs: Long) {
             if (holdFired) return
             dx = x - downX
             dy = y - downY
+            if (dragArmed) return // armed = live vector until UP, no timers apply
             if (tMs - downT >= longPressMs) {
                 holdFired = true
                 return
@@ -76,9 +86,15 @@ object OrbGesture {
             if (downY - y >= minUpPx && abs(x - downX) <= maxDriftPx) dragUpCrossed = true
         }
 
-        /** Classification once the pointer lifted at [releaseT] (or the hold ran on). */
+        /**
+         * Classification once the pointer lifted at [releaseT]. A DRAG stays a DRAG for any
+         * direction; the caller reads [dx]/[dy] for the lane (angle at RELEASE decides, which is
+         * what makes re-aiming mean anything). DRAG_UP is kept honest: only while the finger is
+         * still in the up-corridor at release.
+         */
         fun verdict(releaseT: Long): Verdict = when {
-            dragUpCrossed -> Verdict.DRAG_UP
+            // dx/dy are DELTAS from DOWN — the corridor is "rose ≥ minUp with drift ≤ maxDrift".
+            dragArmed && -dy >= minUpPx && abs(dx) <= maxDriftPx -> Verdict.DRAG_UP
             dragArmed -> Verdict.DRAG
             holdFired || releaseT - downT >= longPressMs -> Verdict.HOLD
             else -> Verdict.TAP

@@ -78,6 +78,7 @@ import dev.hermes.wearos.ui.SettingsScreen
 import dev.hermes.wearos.ui.VoiceHost
 import dev.hermes.wearos.ui.md.ZoomableMediaViewer
 import dev.hermes.wearos.domain.BottomLayout
+import dev.hermes.wearos.domain.DialSpin
 import dev.hermes.wearos.domain.FontScale
 import dev.hermes.wearos.domain.SlashCommands
 import dev.hermes.wearos.domain.Lane
@@ -573,6 +574,26 @@ class MainActivity : ComponentActivity() {
                 // Dev hook `-e viewer_demo [scale]`: the MEDIA VIEWER over a generated test card —
                 // the sub-fit zoom-out proof (d3) over adb without a live gateway image.
                 val devViewerScale by WearApp.Graph.devViewerScale.collectAsState()
+                // THE BACK BUTTON NEVER QUITS (owner batch 5: "hitting the back button from the
+                // keyboard exits Hermes — it needs to go back to the previous screen ALWAYS"):
+                // whatever is open on top closes first, topmost layer wins. Composed AFTER the
+                // screen BackHandlers below, so while an overlay is up this one is the enabled
+                // winner; with nothing open it disables and Sessions/Settings keep their
+                // → Chat handler, and Chat keeps the plain system default (leaving is the exit).
+                androidx.activity.compose.BackHandler(
+                    enabled = editor != null || promptSheet != null || manageSheet != null ||
+                        confirmDelete != null || showAgents || commandsOpen || devViewerScale != null,
+                ) {
+                    when {
+                        editor != null -> editor = null
+                        promptSheet != null -> promptSheet = null
+                        confirmDelete != null -> confirmDelete = null
+                        manageSheet != null -> manageSheet = null
+                        showAgents -> showAgents = false
+                        commandsOpen -> commandsOpen = false
+                        devViewerScale != null -> WearApp.Graph.devViewerScale.value = null
+                    }
+                }
                 devViewerScale?.let { startScale ->
                     ZoomableMediaViewer(
                         bitmap = remember { devMediaTestCard() },
@@ -981,6 +1002,15 @@ private fun OrbCluster(
     val scale = OrbDial.scaleFor(minOf(viewportW, viewportH))
     var armed by remember { mutableStateOf(false) }
     var activeSlot by remember { mutableStateOf(-1) }
+    // SPIN MODE state (domain/DialSpin): the ring's rotation phase, animated so detents read as
+    // icons physically travelling around the disc (owner: "those little icons turn around you").
+    val spin = remember(scale) { DialSpin(scale) }
+    var spinPhase by remember { mutableStateOf(0f) }
+    val spinPhaseAnim by androidx.compose.animation.core.animateFloatAsState(
+        spinPhase,
+        androidx.compose.animation.core.tween(130),
+        label = "dialspinphase",
+    )
     // `-e dial_preview`: pin the ring for screenshots (see WearApp.Graph.devDialPreview — why
     // adb cannot catch a live drag). Auto-clears; nothing user-facing depends on it.
     val dialPreview by WearApp.Graph.devDialPreview.collectAsState()
@@ -1005,6 +1035,7 @@ private fun OrbCluster(
         scale = scale,
         activeSlot = if (armed) activeSlot else -1,
         visible = armed || dialPreview,
+        phaseDeg = spinPhaseAnim,
         voiceOut = voiceOut,
     )
     TalkOrb(
@@ -1022,26 +1053,27 @@ private fun OrbCluster(
         onHoldEnd = onHoldEnd,
         dialScale = scale,
         onDialArm = {
-            armed = true; activeSlot = -1; risen = false
+            armed = true; activeSlot = -1; risen = false; spinPhase = 0f; spin.reset()
         },
         onDialMove = { dx, dy ->
-            if (OrbDial.isCancel(dx, dy, scale)) {
-                activeSlot = -1; risen = false // finger came home: nothing is aimed, no rise
-            } else {
-                val slot = OrbDial.slotAt(OrbDial.angleOf(dx, dy))
-                if (slot != activeSlot) {
-                    activeSlot = slot
-                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                }
-                risen = OrbDial.needsRise(dx, dy, scale)
+            // AIM is the default (highlight follows the live angle — free re-aim, owner batch 5);
+            // a lateral sweep from the top arc engages SPIN (domain/DialSpin): detents walk the
+            // lit slot and the ring physically rotates it under the finger.
+            spin.move(dx, dy)
+            if (spin.changed) {
+                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
             }
+            activeSlot = spin.activeSlot
+            spinPhase = spin.phaseDeg
+            risen = if (spin.spinning) false else OrbDial.needsRise(dx, dy, scale)
         },
-        onDialEnd = { dx, dy ->
-            armed = false; activeSlot = -1; risen = false
-            if (!OrbDial.isCancel(dx, dy, scale)) {
-                val lane = OrbDial.slotFor(slots, OrbDial.slotAt(OrbDial.angleOf(dx, dy)))
+        onDialEnd = { _, _ ->
+            armed = false; activeSlot = -1; risen = false; spinPhase = 0f
+            val slot = spin.commit() // spun gesture: the LIT slot commits, wherever the finger rose
+            if (slot != null) {
+                val lane = OrbDial.slotFor(slots, slot)
                 if (lane != Lane.None) {
-                    Log.d("HermesWear", "dial lane=${lane.id} slot=${OrbDial.slotAt(OrbDial.angleOf(dx, dy))}")
+                    Log.d("HermesWear", "dial lane=${lane.id} slot=$slot spin=${spin.spinning}")
                     onDial(lane)
                 }
             }

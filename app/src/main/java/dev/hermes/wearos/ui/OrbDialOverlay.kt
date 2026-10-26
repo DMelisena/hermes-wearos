@@ -53,6 +53,9 @@ fun OrbDialOverlay(
     activeSlot: Int,
     visible: Boolean,
     voiceOut: Boolean,
+    /** SPIN mode ring rotation (degrees, animated by the caller): the icons travel so the lit
+     *  slot arrives under the finger — 0f rests the dial exactly at its clock positions. */
+    phaseDeg: Float = 0f,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -63,7 +66,7 @@ fun OrbDialOverlay(
     Box(modifier = modifier.fillMaxSize()) {
         for (slot in 0 until OrbDial.SLOT_COUNT) {
             val lane = OrbDial.slotFor(slots, slot)
-            val (cx, cy) = OrbDial.iconCenter(orbCxPx, orbCyPx, slot, scale)
+            val (cx, cy) = OrbDial.iconCenter(orbCxPx, orbCyPx, slot, scale, phaseDeg)
             val active = slot == activeSlot
             val sizePx = ringR * 2f * (if (active) 1.25f else 1f)
             Box(
