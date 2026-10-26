@@ -359,37 +359,59 @@ start with a slash. The catalog therefore declares **how the watch honors each e
 | `stop` | detach + settle + best-effort cancel | `POST /v1/runs/{id}/stop` |
 | `fork` | branch the session | `POST /api/sessions/{id}/fork` |
 | `model` | provider/model picker, persisted lock | `GET /api/model/options` + `POST /api/sessions/{id}/model` |
-| `skills` | live skill list | `GET /v1/skills` (500s on the owner's `wear` profile today — treated as empty, never fatal) |
+| `skill` | run one of the agent's skills by name | skill rows ride the watchkit catalog (it reads `profiles/<p>/skills/` off disk; the gateway's own `GET /v1/skills` 500s on the owner's `wear` profile — treated as empty, never fatal) |
 | `side` | `/btw` = fork-then-ask so the main session stays clean | `session_fork` + run in the fork |
 | `client` | watch-side (new chat, rename, open sessions…) | local |
 | `text` | genuinely a prompt (`/help`-ish, CLI-only ones) | `/v1/runs` — labeled as such in the UI |
 
 `domain/CommandUsage.kt` ranks the overlay by frequency + recency in DataStore (owner: *"I like to
-use the slash BTW and the slash steer a lot"* — that has to be learned, not hardcoded), with
-`/skills` entries seeded live. **Gateway ask (small, filed §13.5):** `GET /v1/commands` off
-`COMMAND_REGISTRY`, which is already gateway-importable — then the catalog self-updates instead of
-being curated by hand here.
+use the slash BTW and the slash steer a lot"* — that has to be learned, not hardcoded).
+
+**Where rows actually come from (three sources, merged in `domain/CommandCatalog.kt`):** the
+curated built-ins (a floor that can never blank the overlay) ⊕ watchkit `GET /catalog` (an operator
+file `command_catalog.json` or watchkit's defaults, PLUS that profile's skill rows read off disk —
+capped at 120 server-side; the overlay previews 12 with a *"+N more — type to filter"* title,
+because this owner's `wear` agent carries 184 skills and a 480-face is not a 200-row menu) ⊕
+**live capability flags read by the WATCH itself** (`GET {base}/v1/capabilities` — the watch holds
+the active profile's key, so watchkit never has to guess; its `capabilities` field is only the
+fallback for an unreachable gateway). Rows whose `requires` gate is false are dimmed with the
+reason, never hidden. Refresh: Settings ▸ Interface ▸ refresh (or automatically when the ⌘ overlay
+opens); `-e slash_catalog <json>` pushes a hand-written one. **Gateway ask (small, filed §13.5):**
+`GET /v1/commands` off `COMMAND_REGISTRY`, which is already gateway-importable — then the catalog
+self-updates instead of being curated by hand here.
 
 ### 12.4 Session search (F18) — `ui/VoiceOrTypeField.kt` + watchkit `GET /search`
 
-Search shares one field component everywhere (Sessions top row next to ＋ new session, Chats, and
-the command overlay): tap → real focused field with 🎙 (Vosk partials land in the query) and ⌨
-(system IME, same ladder `PromptEditor` already fights) chips below it — the owner's
-"keyboard or talk populates" affordance. Titles/ids filter locally and offline; message BODIES come
-from watchkit `GET /search?profile=&q=`, which is a ~40-line query over the `messages_fts` FTS5
-index that already exists in `state.db` (**verified: `MATCH 'watch'` → ranked rows in 23 ms** on the
-owner's 942 MB store). Same `display_kind` noise filters as `/sessions` so cron/tool rows don't
-flood results.
+Search shares one field component (`ui/VoiceOrTypeField.kt`) between the Sessions top row (under ＋
+new session) and the command overlay's filter — Chats rides the same component when it needs it.
+Tap → real focused field with 🎙 and ⌨ chips BELOW it (system IME, same ladder `PromptEditor`
+already fights; a chip row above gets covered). Dictation reuses the orb's Vosk lane through a
+**voice sink**: MainActivity routes partials/finals to whichever field asked for the mic, and a
+final in sink mode never auto-asks — dictating a query must not fire a turn. Titles/ids filter
+locally and offline (transcript previews via `SessionSearch.preview`, matched words bracketed);
+message BODIES come from watchkit `GET /search?profile=&q=`, an FTS5 MATCH over the trigger-
+maintained `messages_fts` joined to `messages`/`sessions` with `snippet()` (verified live: ranked
+hits in **4 ms**, per-profile store — `default` = `~/.hermes/state.db`, agents =
+`profiles/<p>/state.db`). Same visibility rules as `/sessions` (no cron/tool/subagent noise,
+archived hidden); title-LIKE matches ride along with zero message hits; ranking rules — name >
+mentions > recency, one row per session — are unit-tested in `SessionSearchTest`. MainActivity
+debounces 300 ms so dictated sentences search once, not per word.
 
 ### 12.5 Edit & resend = fork-on-edit (F16)
 
 Desktop edit truncates the server history and re-runs. The watch cannot (no truncate route exists),
-so — owner's pick — editing **forks**: `POST /api/sessions/{id}/fork` into a fresh
-`<profile>-watch-<base36>` id (keeps the ⌚ watch marker + the profile prefix contract), the local
-transcript truncates at the edited turn so the screen looks exactly like a desktop branch, and the
-edited text is asked in the fork. Honest limit, stated in `PromptEdit` too: `fork` copies the
-**whole** history (no truncate-to-point), so the superseded turn still sits in the fork's context —
-true rewind needs the gateway `truncate` route (§13.5).
+so — owner's pick — editing **forks** (`ChatSession.editAndResend`): an in-flight answer to the old
+text is detached first, the local transcript rolls back to just before the edited turn,
+`POST /api/sessions/{id}/fork` branches the session and the chat RE-POINTS at the child id (a
+fresh client-side id would start an empty session — only the child carries the copied history),
+and the edited text is asked there. The wrist sees exactly one version of the turn.
+Honest limit, printed as a system line in the transcript instead of hidden: the copy is the
+**whole** history (measured — `up_to_message_id` is accepted and ignored; the child is titled
+"… #2"), so the superseded turn still sits in the model's context; true rewind needs the gateway
+`truncate` route (§13.5). Fork failure (offline, key-less agent) degrades to the old append WITH a
+visible note — a vanished edit would be worse than a piled one. The same primitives honor `/fork`
+in place (`forkActive`) and `/btw <aside>` as a real side thread (`sideAsk`: a NEW watch chat on a
+forked session, parent never sees it, dial 7:30 switches back).
 
 ---
 
