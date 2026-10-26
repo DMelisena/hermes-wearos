@@ -176,6 +176,31 @@ object Watchkit {
     }
 
     /**
+     * THE COMMAND CATALOG (SPEC §12.3): `GET /catalog` on watchkit — the gateway's own slash-command
+     * list plus the capability flags the 6:00 overlay dims by. watchkit is the only place that can
+     * read `GET /v1/capabilities` and `GET /v1/skills` for EVERY profile with no profile key (it also
+     * merges the gateway's `command_catalog.json` if the operator wrote one); the watch has no
+     * reason to reach the gateway directly for a static list.
+     *
+     * Shape (documented in the watchkit header): `{commands:[{name,args,desc,honored,group,requires,
+     * source}], capabilities:{run_steer:true,…}}`. Failures throw — the caller keeps the built-in
+     * catalog, which is why the overlay works on a watch that has never reached this endpoint.
+     */
+    suspend fun catalog(profile: String): CatalogResponse = withContext(Dispatchers.IO) {
+        val cfg = _config.value
+        val url = cfg.baseUrl.toHttpUrl().newBuilder()
+            .addPathSegment("catalog")
+            .addQueryParameter("profile", profile)
+            .build()
+        val req = Request.Builder().url(url).get().header("Authorization", "Bearer ${cfg.token}").build()
+        clientCall(req) { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw ApiException(r.code, "catalog ${r.code}: ${text.take(120)}")
+            CatalogResponse.parse(text)
+        }
+    }
+
+    /**
      * Cross-profile sessions (owner walkthrough): GET /sessions?profile=<p>&limit=<n> — watchkit
      * reads the profile's state.db directly (see server/watchkit). Body is the gateway
      * `/api/sessions` shape + a per-row `profile`, so GatewaySessions.parse handles it verbatim.
@@ -238,4 +263,34 @@ object Watchkit {
 
     private inline fun <T> clientCall(req: Request, crossinline block: (okhttp3.Response) -> T): T =
         HermesApi.DEFAULT.newCall(req).execute().use { block(it) }
+}
+
+/** One catalog row from watchkit `GET /catalog` (SPEC §12.3); `honored`/`group` are the
+ *  CommandKind/CommandGroup names, lowercase, with the same meaning as on the watch side. */
+@kotlinx.serialization.Serializable
+data class CommandInfo(
+    val name: String = "",
+    val args: String = "",
+    val desc: String = "",
+    val honored: String = "",
+    val group: String = "",
+    val requires: String? = null,
+    val source: String = "",
+)
+
+/**
+ * The catalog payload. `honored` reaches the UI verbatim (the overlay shows "inject" / "prompt" /
+ * "branch" per row) because WHAT the watch can do with a command is the whole point of the list —
+ * the Runs API does not dispatch slashes, so an honest client must never pretend otherwise.
+ */
+@kotlinx.serialization.Serializable
+data class CatalogResponse(
+    val commands: List<CommandInfo> = emptyList(),
+    val capabilities: Map<String, Boolean> = emptyMap(),
+) {
+    companion object {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
+        fun parse(text: String): CatalogResponse =
+            json.decodeFromJsonElement(CatalogResponse.serializer(), json.parseToJsonElement(text))
+    }
 }

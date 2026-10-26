@@ -4,9 +4,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * ORB DRAG-UP classifier table (owner ask: drag the talk orb UP = keyboard editor). The orb sees
- * ONE raw pointer stream and must split it: TAP = hands-free toggle, HOLD = press-to-talk,
- * DRAG_UP = open the text editor with the system keyboard (mic never starts).
+ * ORB GESTURE classifier table. Originally the drag-up → keyboard ask; batch 3 grew that one
+ * direction into the 8-lane DIAL (SPEC §12.1), so the orb still sees ONE raw pointer stream and
+ * must split it: TAP = hands-free toggle, HOLD = press-to-talk, DRAG_UP = the 12:00 lane (keyboard,
+ * byte-identical contract), DRAG = any other direction, whose lane `OrbDial.laneAt` decides.
  *
  * All px+ms: at the emulator's density 2 the dp gates are 40dp→80px up and 30dp→60px drift;
  * longPress timeout pinned at 400ms here (Wear default; the Tracker takes it as a parameter).
@@ -22,8 +23,13 @@ class OrbGestureTest {
 
     private data class Move(val x: Float, val y: Float, val t: Long)
 
-    private fun verdict(moves: List<Move>, releaseT: Long, downT: Long = 1_000L): OrbGesture.Verdict {
-        val tracker = OrbGesture.Tracker(downX, downY, downT, longPress, minUp, maxDrift)
+    private fun verdict(
+        moves: List<Move>,
+        releaseT: Long,
+        downT: Long = 1_000L,
+        minDrag: Float = minUp,
+    ): OrbGesture.Verdict {
+        val tracker = OrbGesture.Tracker(downX, downY, downT, longPress, minUp, maxDrift, minDrag)
         moves.forEach { tracker.move(it.x, it.y, it.t) }
         return tracker.verdict(releaseT)
     }
@@ -33,8 +39,13 @@ class OrbGestureTest {
     }
 
     @Test fun `jittery quick release stays a TAP`() {
-        // Watch touches always drift a few px — tap must survive it (that was the MediaViewer bug).
+        // Watch touches always drift a few px — tap must survive it (that was the MediaViewer bug),
+        // and it does even against the dial's tighter production gate (51px below).
         assertEquals(OrbGesture.Verdict.TAP, verdict(listOf(Move(205f, 595f, 1_060L)), releaseT = 1_100L))
+        assertEquals(
+            OrbGesture.Verdict.TAP,
+            verdict(listOf(Move(205f, 595f, 1_060L)), releaseT = 1_100L, minDrag = 51f),
+        )
     }
 
     @Test fun `press held past the timeout with no movement is a HOLD`() {
@@ -66,25 +77,47 @@ class OrbGestureTest {
         )
     }
 
+    @Test fun `a slow drag past the dial gate after the timeout is still PTT, not a lane`() {
+        // The dial is a FLICK. Cross the 51px gate at 450ms (after the 400ms hold lock) and the
+        // hold stands — hold-then-slide keeps talking (unchanged owner semantics).
+        assertEquals(
+            OrbGesture.Verdict.HOLD,
+            verdict(listOf(Move(200f, 560f, 1_300L), Move(200f, 500f, 1_450L)), releaseT = 1_700L, minDrag = 51f),
+        )
+    }
+
     @Test fun `rise under the gate (30dp) is still a TAP`() {
         assertEquals(OrbGesture.Verdict.TAP, verdict(listOf(Move(200f, 530f, 1_150L)), releaseT = 1_160L))
     }
 
-    @Test fun `steep diagonal - rise ok but drift past 30dp - is a TAP not DRAG_UP`() {
-        assertEquals(OrbGesture.Verdict.TAP, verdict(listOf(Move(270f, 500f, 1_150L)), releaseT = 1_160L))
+    @Test fun `steep diagonal past the dial gate is a DRAG, never a DRAG_UP`() {
+        // Batch 3: drift past 30dp used to make this a TAP. Now ANY direction out of the disc is
+        // the dial (this vector points at 1:30) — but it is still NOT the keyboard lane, which
+        // keeps its own strict up-plus-tight-drift contract.
+        assertEquals(OrbGesture.Verdict.DRAG, verdict(listOf(Move(270f, 500f, 1_150L)), releaseT = 1_150L + 10L))
     }
 
     @Test fun `drift exactly on the 30dp gate still counts as DRAG_UP`() {
         assertEquals(OrbGesture.Verdict.DRAG_UP, verdict(listOf(Move(260f, 500f, 1_150L)), releaseT = 1_160L))
     }
 
-    @Test fun `downward drag (scroll intent) released early is a TAP`() {
-        // Only UP opens the editor; a downward flick on the orb keeps the old tap-with-slop semantics.
-        assertEquals(OrbGesture.Verdict.TAP, verdict(listOf(Move(200f, 700f, 1_150L)), releaseT = 1_160L))
+    @Test fun `downward drag is a lane now, not a TAP`() {
+        // Owner batch 3: "if I drag it just straight down … pop up with an overlay of all the slash
+        // commands". The 6:00 wedge owns it; OrbDialTest proves WHICH lane the vector means.
+        assertEquals(OrbGesture.Verdict.DRAG, verdict(listOf(Move(200f, 700f, 1_150L)), releaseT = 1_160L))
     }
 
     @Test fun `crossing exactly on the timeout event is a HOLD (hold wins the tie)`() {
         assertEquals(OrbGesture.Verdict.HOLD, verdict(listOf(Move(200f, 500f, 1_400L)), releaseT = 1_420L))
+    }
+
+    @Test fun `vector rides the last move so the dial can aim while the finger travels`() {
+        val tracker = OrbGesture.Tracker(downX, downY, 1_000L, longPress, minUp, maxDrift, 51f)
+        tracker.move(270f, 500f, 1_150L)
+        assertEquals(70f, tracker.dx, 0.01f)
+        assertEquals(-100f, tracker.dy, 0.01f)
+        tracker.move(140f, 500f, 1_250L) // steer left mid-drag: the vector follows, it does not latch
+        assertEquals(-60f, tracker.dx, 0.01f)
     }
 
     @Test fun `dp gate constants match the owner spec`() {

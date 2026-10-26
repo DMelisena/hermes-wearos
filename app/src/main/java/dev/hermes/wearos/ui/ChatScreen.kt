@@ -43,7 +43,6 @@ fun ChatScreen(
     state: ChatUiState,
     onApprove: (String) -> Unit,
     voiceEnabled: Boolean,
-    onToggleVoice: () -> Unit,
     voiceStatus: String = "",
     chatLabel: String = "",
     onOpenChats: () -> Unit = {},
@@ -103,7 +102,7 @@ fun ChatScreen(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         item {
-            ChatHeader(voiceEnabled, onToggleVoice, voiceStatus, chatLabel, onOpenChats)
+            ChatCaption(voiceEnabled, voiceStatus, chatLabel)
         }
         if (state.messages.isEmpty() && state.live.isEmpty() && state.approval == null) {
             item {
@@ -149,16 +148,22 @@ fun ChatScreen(
     }
 }
 
+/**
+ * ONE PASSIVE CAPTION LINE (owner batch 3: "would it simplify the interface even more to get all
+ * but the orb button off the main screen?"). The mute chip and the chat-name chip are GONE — mute
+ * is the dial's 1:30 lane and chats is 7:30 — but the state they carried still has to be READABLE:
+ * speak-aloud state (the same glyph the ring shows, so the dial and the caption agree), the chat
+ * name, and any voice/TTS warning in the amber the old chip used. No touch target: tapping here
+ * scrolls the transcript like any other text, which is what a caption should do.
+ */
 @Composable
-private fun ChatHeader(
+private fun ChatCaption(
     enabled: Boolean,
-    onToggle: () -> Unit,
     status: String,
     chatLabel: String,
-    onOpenChats: () -> Unit,
 ) {
-    // The header is item 0 of a Middle-anchored SLC: contentPadding can't keep it below the
-    // clock when content is short, so the header carries the top inset itself (round ask #5).
+    // The caption is item 0 of a Middle-anchored SLC: contentPadding can't keep it below the clock
+    // when content is short, so it carries the top inset itself (round ask #5).
     val insets = roundInsets()
     Row(
         modifier = Modifier
@@ -168,31 +173,17 @@ private fun ChatHeader(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(width = 44.dp, height = 26.dp)
-                .clip(RoundedCornerShape(percent = 50))
-                .background(MaterialTheme.colors.surface.copy(alpha = 0.35f))
-                .clickable(onClick = onToggle),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(if (enabled) "🔊" else "🔇", style = MaterialTheme.typography.body2)
-        }
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(percent = 50))
-                .clickable(onClick = onOpenChats),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                chatLabel.ifEmpty { "💬" },
-                style = MaterialTheme.typography.caption3,
-                color = MaterialTheme.colors.onBackground.copy(alpha = 0.7f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Text(
+            buildString {
+                append(if (enabled) "🔊 " else "🔇 ")
+                append(chatLabel.ifEmpty { "·" })
+            },
+            style = MaterialTheme.typography.caption3,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.62f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
         if (status.isNotEmpty()) {
             Text(
                 status,

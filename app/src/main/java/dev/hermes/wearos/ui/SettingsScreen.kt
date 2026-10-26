@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +42,8 @@ import androidx.wear.compose.material.Text
 import dev.hermes.wearos.WearApp
 import dev.hermes.wearos.data.AppSettings
 import dev.hermes.wearos.domain.FontScale
+import dev.hermes.wearos.domain.Lane
+import dev.hermes.wearos.domain.OrbDial
 import dev.hermes.wearos.domain.Gateway
 import dev.hermes.wearos.domain.GatewayModel
 import dev.hermes.wearos.health.BodySnapshot
@@ -296,6 +299,81 @@ fun SettingsScreen(
             fontSize = 10.sp,
             color = MaterialTheme.colors.onBackground.copy(alpha = 0.5f),
         )
+
+        // THE ORB DIAL (SPEC §12.1, owner batch 3): "the orb should be the only thing on the
+        // screen — drag it eight ways". Every one of the eight directions is a lane and every lane
+        // is remappable HERE. Tapping a row advances that direction to the next action (the Lane
+        // list cycles; `off` blanks a direction so an accidental drag does nothing instead of
+        // opening something). The chat reads the StateFlow mirror, so the very next flick obeys —
+        // no restart, and the ring icons change with it.
+        FieldLabel("Orb dial — drag 8 ways")
+        val dialSlots by settings.orbSlots.collectAsState()
+        Text(
+            "tap a direction to change it",
+            style = MaterialTheme.typography.caption3,
+            fontSize = 10.sp,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.5f),
+        )
+        dialSlots.forEachIndexed { i, lane ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClickLabel = "change ${OrbDial.clockLabel(i)}") {
+                        val all = Lane.entries
+                        scope.launch { settings.setOrbSlot(i, all[(lane.ordinal + 1) % all.size]) }
+                    }
+                    .padding(vertical = 3.dp, horizontal = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    OrbDial.clockLabel(i),
+                    style = MaterialTheme.typography.caption2,
+                    color = MaterialTheme.colors.primary,
+                    modifier = Modifier.width(46.dp),
+                )
+                Text(lane.glyph, style = MaterialTheme.typography.caption1)
+                Text(
+                    lane.label,
+                    style = MaterialTheme.typography.caption1,
+                    color = if (lane == Lane.None) MaterialTheme.colors.onBackground.copy(alpha = 0.4f)
+                        else MaterialTheme.colors.onBackground,
+                )
+            }
+        }
+        var catalogNote by remember { mutableStateOf("") }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "refresh commands",
+                style = MaterialTheme.typography.caption1,
+                color = MaterialTheme.colors.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(percent = 50))
+                    .background(MaterialTheme.colors.surface.copy(alpha = 0.4f))
+                    .clickable(onClickLabel = "refresh command catalog from watchkit") {
+                        scope.launch {
+                            catalogNote = "…"
+                            catalogNote = try {
+                                val n = settings.refreshSlashCatalog(settings.profileSync())
+                                if (n > 0) "$n commands" else "gateway sent none back"
+                            } catch (e: Exception) {
+                                "watchkit unreachable: ${e.message?.take(40) ?: e.javaClass.simpleName}"
+                            }
+                        }
+                    }
+                    .padding(horizontal = 9.dp, vertical = 4.dp),
+            )
+            Text(
+                "⌘ 6:00 · steer/btw land here" + (if (catalogNote.isEmpty()) "" else " · $catalogNote"),
+                style = MaterialTheme.typography.caption3,
+                fontSize = 9.5.sp,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.5f),
+            )
+        }
 
         // watchkit helper daemon (server/watchkit, tailnet :8651): health probe like the Hermes Test.
         FieldLabel("Watchkit")

@@ -118,6 +118,85 @@ function listAgents() {
   return agents;
 }
 
+// ── command catalog (the watch's ⌘ / 6:00 dial overlay) ────────────────────
+// The watch's slash overlay must never pretend the Runs API dispatches slash commands (it does
+// not: `POST /v1/runs` turns `input` into a MODEL message), so every row declares `honored` =
+// what the WATCH does with it. Rows come from one place and one place only on this box:
+//   <watchkit>/command_catalog.json  — optional, operator-authored, hot-reloaded per request
+//     {"commands":[{"name":"steer","args":"your guidance","desc":"inject into the run in flight",
+//                  "honored":"steer","group":"commands","requires":"run_steer","source":"gateway"}],
+//      "capabilities":{"run_steer":true}}
+// With no file we answer with the DEFAULT_ROWS below, so a fresh watchkit still lights the overlay
+// up with real rows instead of nothing. Capability FLAGS are NOT guessed here: the watch reads
+// `GET /p/<agent>/v1/capabilities` itself (it holds that profile's key) and dims rows from the
+// truth — watchkit never claims a feature it cannot see. Skill rows ride the same response:
+// watchkit reads `state.db` for profiles the watch has no key for, so `GET /catalog?profile=x`
+// returns that agent's SKILLs too (from its skills/ dir), which is why the watch needs no
+// skills endpoint of its own.
+const CATALOG_PATH = process.env.WATCHKIT_CATALOG || path.join(WK_DIR, 'command_catalog.json');
+const SKILL_ROW_CAP = Number(process.env.WATCHKIT_SKILL_CAP || 120); // overlay caps the view too
+const DEFAULT_ROWS = [
+  { name: 'steer', args: 'your guidance', desc: 'inject guidance into the run in flight', honored: 'steer', group: 'commands', requires: 'run_steer' },
+  { name: 'stop', desc: 'stop the run in flight', honored: 'stop', group: 'commands', requires: 'run_stop' },
+  { name: 'btw', args: 'aside', desc: 'side conversation in a fork — keeps this thread clean', honored: 'side', group: 'commands', requires: 'session_fork' },
+  { name: 'fork', desc: 'branch this session and continue there', honored: 'fork', group: 'commands', requires: 'session_fork' },
+  { name: 'model', desc: 'change the model for this session', honored: 'model', group: 'commands', requires: 'model_options' },
+  { name: 'compact', desc: 'compress context (asked as a prompt — the gateway decides)', honored: 'prompt', group: 'commands' },
+  { name: 'status', desc: 'gateway + watchkit health, right now', honored: 'status', group: 'client' },
+  { name: 'sessions', desc: 'gateway/computer sessions', honored: 'client', group: 'client' },
+  { name: 'chats', desc: 'local chats for this agent', honored: 'client', group: 'client' },
+  { name: 'agents', desc: 'switch agent', honored: 'client', group: 'client' },
+  { name: 'new', desc: 'start a fresh chat', honored: 'client', group: 'client' },
+  { name: 'settings', desc: 'settings', honored: 'client', group: 'client' },
+];
+
+function skillRows(profile) {
+  // <profile>/skills/<name>/SKILL.md → a slash row. Same shape the desktop sidebar lists; a
+  // missing/odd dir is simply no rows (a gateway without skills must not look broken).
+  const dir = path.join(PROFILES_DIR, profile === 'default' ? '' : profile, 'skills');
+  const out = [];
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return out; }
+  for (const name of names.sort()) {
+    if (name.startsWith('.')) continue;
+    try {
+      const md = path.join(dir, name, 'SKILL.md');
+      if (!fs.existsSync(md)) continue;
+      const head = fs.readFileSync(md, 'utf8').slice(0, 4000);
+      const fm = /^---\n([\s\S]*?)\n---/.exec(head);
+      const desc = fm && /(?:^|\n)description:\s*(.+)/.exec(fm[1]);
+      out.push({
+        name: name.replace(/\s+/g, '-').toLowerCase(),
+        args: '',
+        desc: (desc ? desc[1] : '').replace(/^["']|["']$/g, '').slice(0, 140),
+        honored: 'skill', group: 'skills', source: profile,
+      });
+    } catch { /* skip unreadable skill dir */ }
+  }
+  return out;
+}
+
+async function handleCatalog(req, res, ip, params) {
+  const profile = String(params.profile || 'default').replace(/[^a-z0-9_-]/gi, '').slice(0, 40) || 'default';
+  let commands = DEFAULT_ROWS, caps = {};
+  try {
+    const raw = JSON.parse(fs.readFileSync(CATALOG_PATH, 'utf8'));
+    if (Array.isArray(raw.commands) && raw.commands.length) commands = raw.commands;
+    if (raw.capabilities && typeof raw.capabilities === 'object') caps = raw.capabilities;
+  } catch { /* no file / bad JSON: defaults answer, which is the point of shipping them */ }
+  // A profile with 200 skills must not deliver a 200-row menu: the watch shows the SKILLS section
+  // collapsed-until-filtered, and we cap the payload too (alphabetical, stable) so a huge skill
+  // dir can't turn a catalog fetch into a megabyte. `truncated` tells the watch to say so.
+  const skills = skillRows(profile);
+  const capped = skills.slice(0, SKILL_ROW_CAP);
+  const rows = commands.concat(capped);
+  const body = JSON.stringify({
+    commands: rows, capabilities: caps, profile,
+    skill_count: skills.length, truncated: skills.length > capped.length,
+  });
+  return done(res, send(res, 200, body), Date.now(), ip, 'catalog', 200, undefined, rows.length);
+}
+
 const STATE_DIR = path.join(WK_DIR, '.state');
 const SNAPSHOT_PATH = path.join(STATE_DIR, 'snapshot.json');
 const SNAPSHOT_MAX_BYTES = 256 * 1024;
@@ -609,6 +688,11 @@ const server = http.createServer(async (req, res) => {
       return done(res, send(res, 200, JSON.stringify({ agents })), t0, ip, 'agents', 200, undefined, agents.length);
     }
     // Cross-profile sessions for the watch's Sessions screen (owner: continue computer chats).
+    // Slash-command catalog for the watch's ⌘ overlay (SPEC §12.3). Bearer like every endpoint.
+    if (req.method === 'GET' && url === '/catalog') {
+      const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
+      return await handleCatalog(req, res, ip, q);
+    }
     if (req.method === 'GET' && url === '/sessions') {
       const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
       return await handleSessions(req, res, ip, q);

@@ -3,6 +3,7 @@ package dev.hermes.wearos.net
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -37,6 +38,16 @@ class HermesApi(
             .build()
 
         fun parse(data: String): JsonObject = Json_.parseToJsonElement(data).jsonObject
+        /** true/false as BOOLEANs only — a `"true"` string is a value, not a flag. */
+        fun JsonElement.booleanOrNull(): Boolean? = (this as? JsonPrimitive)?.let { p ->
+            when {
+                p.isString -> null
+                p.content == "true" -> true
+                p.content == "false" -> false
+                else -> null
+            }
+        }
+
         fun JsonObject.str(key: String): String? =
             (this[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }
         fun JsonObject.choiceNames(): List<String> =
@@ -128,6 +139,43 @@ class HermesApi(
             val text = r.body?.string().orEmpty()
             if (!r.isSuccessful) throw ApiException(r.code, "run stop ${r.code}: ${text.take(120)}")
             return text.take(120)
+        }
+    }
+
+    /**
+     * `/steer` (SPEC §12.3, gateway cap `run_steer: true`): inject guidance into the run IN
+     * FLIGHT — `POST /v1/runs/{run_id}/steer` — instead of queueing another turn. The dial's
+     * "steer" lane and the slash overlay both land here, so `runId` is whatever the session last
+     * accepted; a 404/409 means the run already ended and the caller falls back to a plain ask.
+     * Returns the gateway's echo text (short); throws ApiException/IOException otherwise.
+     */
+    /**
+     * GATEWAY FEATURE FLAGS (`GET {base}/v1/capabilities`, the key-holder route). The slash
+     * overlay dims a row whose `requires` gate the gateway does not advertise, so `/steer` on a
+     * gateway without `run_steer` shows the reason instead of firing a request that must fail —
+     * the honest half of SPEC §12.3. 401/unreachable → empty map = "unknown", which the overlay
+     * renders as enabled rather than falsely greyed.
+     */
+    suspend fun capabilities(): Map<String, Boolean> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            client.newCall(request("$baseUrl/v1/capabilities")).execute().use { r ->
+                val text = r.body?.string().orEmpty()
+                if (!r.isSuccessful) throw ApiException(r.code, "capabilities ${r.code}: ${text.take(120)}")
+                parse(text).entries.mapNotNull { (k, v) ->
+                    val b = (v as? JsonPrimitive)?.booleanOrNull() ?: return@mapNotNull null
+                    k to b
+                }.toMap()
+            }
+        }
+
+    suspend fun steerRun(runId: String, text: String): String {
+        val body = "{\"input\":${esc(text)}}"
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            client.newCall(request("$baseUrl/v1/runs/$runId/steer", body)).execute().use { r ->
+                val txt = r.body?.string().orEmpty()
+                if (!r.isSuccessful) throw ApiException(r.code, "run steer ${r.code}: ${txt.take(160)}")
+                txt.take(160)
+            }
         }
     }
 

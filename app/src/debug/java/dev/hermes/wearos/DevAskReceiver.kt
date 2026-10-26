@@ -4,8 +4,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import android.widget.Toast
 import dev.hermes.wearos.voice.MediaPlayerHolder
 import dev.hermes.wearos.voice.VoskStt
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /** Debug builds only: `adb shell am broadcast -n .../DevAskReceiver -e text "..."` (or -e set_token K,
  *  -e set_watchkit K, -e render_test, -e img_test, -e chat_new, -e open_chat <id>, -e chat_dump,
@@ -15,7 +19,10 @@ import dev.hermes.wearos.voice.VoskStt
  *  -e fontscale <1.4|reset> (persist+apply pinch font-scale without fingers),
  *  -e viewer_demo [scale] (open the media viewer on a generated card — sub-fit zoom proof;
  *  scale like 0.5 opens BELOW fit directly, 0/false closes).
- *  Gateway-epic additions: -e gw_dump, -e gw_probe, -e gw_select <id>. */
+ *  Gateway-epic additions: -e gw_dump, -e gw_probe, -e gw_select <id>.
+ *  Dial-epic additions (SPEC §12-13): -e render [list|tables|wide|mermaid|pdf|link|media|all]
+ *  (inject a canned answer that exercises the media surfaces — no gateway, no model),
+ *  -e slash_catalog <json> (push the 6:00 overlay's command catalog + capability flags). */
 class DevAskReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         val token = intent?.getStringExtra("set_token")
@@ -84,6 +91,34 @@ class DevAskReceiver : BroadcastReceiver() {
         if (intent?.hasExtra("chat_new") == true) {
             val meta = WearApp.Graph.session.createChat()
             Log.i("HermesWear", "chat_new id=${meta.id} session=${meta.sessionTitle}")
+            return
+        }
+        // RENDER HARNESS (SPEC §13.3): inject a canned answer that exercises the media surfaces —
+        // `-e render list` prints the ids, `-e render tables|wide|mermaid|pdf|link|media|all`
+        // injects one. No gateway, no model: the renderer is what's under test.
+        intent?.getStringExtra("render")?.let {
+            val id = it.trim().ifEmpty { "all" }
+            val ids = dev.hermes.wearos.domain.RenderCase.ids()
+            if (id == "list") {
+                Log.i("HermesWear", "dev: render cases = $ids")
+                Toast.makeText(context, "render: $ids", Toast.LENGTH_LONG).show()
+                return
+            }
+            WearApp.Graph.devRender.value = id
+            Log.i("HermesWear", "dev: render case '$id' queued")
+            return
+        }
+        // PUSHED COMMAND CATALOG (SPEC §12.3): the 6:00 overlay reads gateway rows + capability
+        // flags from this JSON. A real install gets it from watchkit `GET /catalog`; over adb the
+        // dev can paste a hand-written file and watch the overlay change without a gateway.
+        intent?.getStringExtra("slash_catalog")?.let {
+            val raw = it
+            CoroutineScope(Dispatchers.Main).launch {
+                WearApp.Graph.settings.setSlashCatalogJson(raw)
+                val n = dev.hermes.wearos.domain.CommandCatalog.parse(raw).entries.size
+                Log.i("HermesWear", "dev: slash catalog pushed ($n rows, ${raw.length} chars)")
+                Toast.makeText(context, "commands: $n rows", Toast.LENGTH_SHORT).show()
+            }
             return
         }
         intent?.getStringExtra("open_chat")?.let { WearApp.Graph.session.openChat(it); return }

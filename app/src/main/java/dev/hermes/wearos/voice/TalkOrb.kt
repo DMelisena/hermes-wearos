@@ -33,6 +33,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.hermes.wearos.R
+import dev.hermes.wearos.domain.OrbDial
 import dev.hermes.wearos.domain.OrbGesture
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -45,20 +46,23 @@ private val OrbStop = Color(0xFF7F1D1D)
 private val OrbStopRing = Color(0xFFFF5252)
 
 /**
- * The TALK orb, OWNER BATCH 2 redesign: "talk doesn't need to be a full circle; talk button maybe
+ * The TALK orb — and since batch 3, the ONLY control on the chat screen: every satellite button
+ * became a drag direction (SPEC §12.1). "talk doesn't need to be a full circle; talk button maybe
  * can actually be the hermes icon" — a circular button rendering the HERMES MASCOT glyph
  * (ic_hermes_orb, a tintable white mark; NO "TALK" text anymore) on the launcher-dark disc.
- * LAYOUT D: the diameter is now a PARAMETER (the bottom cluster feeds the computed circle), the
- * default keeps the old 68 dp look for anything else that embeds it.
+ * LAYOUT D: the diameter is a PARAMETER (the cluster feeds the computed circle); the default keeps
+ * the old 68 dp look for anything else that embeds it.
  *  - idle: the glyph (slightly softened alpha).
  *  - pressed: glyph brightened to full white + lighter base (visual feedback for the hold).
  *  - listening: red base + PULSE RING (expanding/fading circle), glyph kept.
  *  - running (a reply streams): red ring + a STOP square over the dimmed glyph — tap/hold-release
  *    stops the run (ask #3 semantics UNCHANGED).
- * Tap = hands-free listening (VAD auto-send), hold = push-to-talk, exactly as before: the gesture
- * is hand-rolled (after the long-press timeout with the finger still down we enter hold mode and
- * call onHoldStart; the eventual up/cancel calls onHoldEnd). Not a Material `Button`: wear
- * Buttons swallow click-only semantics and the hold gesture needs the raw pointer stream.
+ * Tap = hands-free listening (VAD auto-send), hold = push-to-talk, exactly as before; a DRAG out of
+ * the disc now reports a vector stream ([onDialArm]/[onDialMove]/[onDialEnd]) and the caller decides
+ * the lane with `OrbDial` — because the ring lives in the parent (it must be drawn around the orb,
+ * and the contextual rise moves the orb itself). The up-drag that used to open the keyboard is now
+ * simply the 12:00 lane, so `onDragUp` is gone. Not a Material `Button`: wear Buttons swallow
+ * click-only semantics and the hold/drag lane needs the raw pointer stream.
  */
 @Composable
 fun TalkOrb(
@@ -69,9 +73,14 @@ fun TalkOrb(
     onTap: () -> Unit,
     onHoldStart: () -> Unit,
     onHoldEnd: () -> Unit,
-    // ORB DRAG-UP (owner ask): release after an UPWARD drag (≥40dp, drift <30dp) crossing
-    // BEFORE the long-press timeout → keyboard editor instead of mic. Never fires tap/hold.
-    onDragUp: () -> Unit = {},
+    /** 480→viewport scale (`OrbDial.scaleFor`) so the dial gate is proportional on every face. */
+    dialScale: Float = 1f,
+    /** The finger left the disc in some direction — show the ring. */
+    onDialArm: () -> Unit = {},
+    /** Live drag vector (viewport px, from the DOWN point) — aim the ring with this. */
+    onDialMove: (dxPx: Float, dyPx: Float) -> Unit = { _, _ -> },
+    /** Released. The caller cancels when `OrbDial.isCancel` says the finger came home. */
+    onDialEnd: (dxPx: Float, dyPx: Float) -> Unit = { _, _ -> },
 ) {
     var pressed by remember { mutableStateOf(false) }
     val bg = when {
@@ -108,7 +117,7 @@ fun TalkOrb(
                 )
                 .clip(CircleShape)
                 .background(bg)
-                .pointerInput(running) {
+                .pointerInput(running, dialScale) {
                     val minUp = OrbGesture.MIN_UP_DP.dp
                     val maxDrift = OrbGesture.MAX_DRIFT_DP.dp
                     awaitEachGesture {
@@ -117,20 +126,20 @@ fun TalkOrb(
                         val tracker = OrbGesture.Tracker(
                             down.position.x, down.position.y, down.uptimeMillis,
                             viewConfiguration.longPressTimeoutMillis, minUp.toPx(), maxDrift.toPx(),
+                            OrbDial.ACTIVATE_REF * dialScale,
                         )
-                        var dragArmed = false
-                        // TRUE = released before the long-press timeout; FALSE = drag gate crossed;
-                        // null = timeout expired (hold/PTT territory).
-                        val up = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                        // THE RACE: drag gate vs hold timeout — whoever crosses first owns the
+                        // gesture (a slow slide is PTT, a flick is a lane, and the finger that
+                        // lifts before either is a tap).
+                        val earlyUp = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
                             while (true) {
                                 val ev = awaitPointerEvent()
                                 val ch = ev.changes.firstOrNull { it.pressed }
-                                if (ch == null) return@withTimeoutOrNull true // up (or cancel)
+                                if (ch == null) return@withTimeoutOrNull true // up/cancel, no gate
                                 // This artifact's PointerEvent has no event timestamp — the
                                 // per-change uptimeMillis is the time source (1.7-era API).
                                 tracker.move(ch.position.x, ch.position.y, ch.uptimeMillis)
-                                if (tracker.dragUpCrossed) {
-                                    dragArmed = true
+                                if (tracker.dragArmed || tracker.dragUpCrossed) {
                                     // Claim the stream: the transcript under the orb must not scroll.
                                     ev.changes.forEach { if (it.pressed) it.consume() }
                                     return@withTimeoutOrNull false
@@ -138,15 +147,23 @@ fun TalkOrb(
                             }
                         }
                         when {
-                            dragArmed -> {
-                                // DRAG-UP: wait out the finger, then hand off to the editor — no
-                                // hands-free listening, no PTT (the mic never started).
-                                android.util.Log.d("HermesWear", "orb: drag-up -> editor")
-                                waitForUpOrCancellation()
+                            earlyUp == false -> {
+                                // DIAL: feed the ring until the finger leaves, then let go = commit.
+                                // No mic ever started here.
+                                onDialArm()
+                                onDialMove(tracker.dx, tracker.dy)
+                                while (true) {
+                                    val ev = awaitPointerEvent()
+                                    val ch = ev.changes.firstOrNull { it.pressed }
+                                    if (ch == null) break
+                                    tracker.move(ch.position.x, ch.position.y, ch.uptimeMillis)
+                                    ev.changes.forEach { if (it.pressed) it.consume() }
+                                    onDialMove(tracker.dx, tracker.dy)
+                                }
                                 pressed = false
-                                onDragUp()
+                                onDialEnd(tracker.dx, tracker.dy)
                             }
-                            up != null -> {
+                            earlyUp == true -> {
                                 pressed = false
                                 onTap()
                             }

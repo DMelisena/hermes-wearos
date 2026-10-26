@@ -460,6 +460,18 @@ class ChatSession(
      * (`run_stop` capability) — called, but never required: client-side stop is the deliverable
      * even when the gateway rejects or is unreachable.
      */
+    /**
+     * DEV RENDER HARNESS (SPEC §13.3): inject a canned answer into the live transcript WITHOUT the
+     * gateway (`-e render tables` → the 5-column grid, `-e render mermaid` → the fence, …). It lands
+     * exactly like a streamed Hermes answer — same markdown path, same scroll anchoring — so a
+     * screenshot proves the renderer rather than the model's taste.
+     */
+    fun injectAnswer(text: String) {
+        addMessage(ChatMessage.Role.Hermes, text)
+        if (activeId.isNotEmpty()) store.saveTranscript(activeId, messageLog)
+        Log.i(TAG, "dev: injected ${text.length} chars of canned answer (chat=$activeId)")
+    }
+
     fun stopActiveRun() {
         if (!_state.value.busy) { Log.i(TAG, "stop ignored: no run in flight"); return }
         val runId = currentRunId
@@ -485,6 +497,38 @@ class ChatSession(
             store.update(chatId) { it.copy(lastRunId = "", updatedAt = System.currentTimeMillis()) }
             scope.launch { settings.setLastRun("") }
             store.saveTranscript(chatId, messageLog)
+        }
+    }
+
+    /**
+     * `/steer` (SPEC §12.3, gateway cap `run_steer`): inject guidance into the run IN FLIGHT
+     * (`POST /v1/runs/{id}/steer`) instead of queueing another turn — the dial/overlay lane the
+     * owner lives by ("I like to use the slash BTW and the slash steer a lot"). The transcript
+     * shows it as a user line with a `⟳ steer` marker so the thread still reads honestly.
+     *
+     * Fallback is deliberate: nothing in flight, or the gateway lacks the cap, or the run ended
+     * between tap and request → ask it as a normal turn. A steer that vanished silently is worse
+     * than one that lands one beat late.
+     */
+    fun steer(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        val runId = currentRunId
+        if (runId.isEmpty() || runId == lastFinishedRun || !_state.value.busy) {
+            Log.i(TAG, "steer: nothing in flight → plain ask")
+            ask(t)
+            return
+        }
+        scope.launch {
+            try {
+                api().steerRun(runId, t)
+                addMessage(ChatMessage.Role.User, "\u27f3 steer: $t")
+                if (activeId.isNotEmpty()) store.saveTranscript(activeId, messageLog)
+                Log.i(TAG, "steer injected into run=$runId")
+            } catch (e: Exception) {
+                Log.w(TAG, "steer failed (${e.message}) → asked instead")
+                ask(t)
+            }
         }
     }
 

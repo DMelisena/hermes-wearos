@@ -107,6 +107,14 @@ class WearApp : Application() {
         val devEditor = MutableStateFlow<String?>(null)
 
         /**
+         * DEV RENDER HARNESS (SPEC §13.3): `-e render <case>` → the case id, consumed by the chat
+         * screen, which injects the canned answer (`RenderCase`) straight into the transcript.
+         * Proves the 5-column grid / viewer / mermaid / PDF / link surfaces over adb + screencap
+         * without asking a model five times. `-e render list` echoes the ids in logcat.
+         */
+        val devRender = MutableStateFlow<String?>(null)
+
+        /**
          * MAIN-THREAD GATE for every UI callback (walkthrough crash, 2a32c65):
          * `java.lang.NullPointerException: Can't toast on a thread that has not called
          * Looper.prepare()` at MainActivity switchAgent toast — because Graph's scope is
@@ -169,6 +177,9 @@ class WearApp : Application() {
                 scope.launch { speak.loadEnabled() }
                 scope.launch { settings.loadMarkdownRendering() } // Display ▸ markdown (F3 default ON)
                 scope.launch { settings.loadFontScale() } // pinch font-scale (Layout D epic)
+                scope.launch { settings.loadOrbSlots() } // the dial map (SPEC §12.1) — chat reads the mirror
+                scope.launch { settings.loadCommandUsage() } // slash-overlay recents (SPEC §12.3)
+                scope.launch { settings.loadSlashCatalog() } // pushed command catalog, if any
                 scope.launch { settings.loadBodyTools() } // W1-W4: body switches (all default OFF)
                 scope.launch { Watchkit.setConfig(settings.mermaidBaseUrl(), settings.watchkitToken()) } // F4/watchkit
                 agents = AgentsRepo(settings)

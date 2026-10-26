@@ -77,9 +77,20 @@ import dev.hermes.wearos.ui.VoiceHost
 import dev.hermes.wearos.ui.md.ZoomableMediaViewer
 import dev.hermes.wearos.domain.BottomLayout
 import dev.hermes.wearos.domain.FontScale
+import dev.hermes.wearos.domain.SlashCommands
+import dev.hermes.wearos.domain.Lane
+import dev.hermes.wearos.domain.OrbDial
+import dev.hermes.wearos.domain.RenderCase
 import dev.hermes.wearos.domain.ProfileLogic
 import dev.hermes.wearos.domain.PromptEdit
 import dev.hermes.wearos.domain.Vad
+import dev.hermes.wearos.domain.CommandCatalog
+import dev.hermes.wearos.domain.CommandEntry
+import dev.hermes.wearos.domain.CommandKind
+import dev.hermes.wearos.domain.CommandUsage
+import dev.hermes.wearos.ui.CommandsOverlay
+import dev.hermes.wearos.ui.CommandOverlayState
+import dev.hermes.wearos.ui.OrbDialOverlay
 import dev.hermes.wearos.net.GatewaySessions
 import dev.hermes.wearos.voice.SpeakAloud
 import dev.hermes.wearos.voice.TalkOrb
@@ -166,7 +177,14 @@ class MainActivity : ComponentActivity() {
                 val sttStatus = remember { mutableStateOf("") }
                 val sttJob = remember { mutableStateOf<Job?>(null) }
 
-                fun endListening() { WearApp.Graph.stt.stop() }
+                val voiceSink = remember { mutableStateOf<((String) -> Unit)?>(null) }
+
+                fun endListening() {
+                    WearApp.Graph.stt.stop()
+                    voiceSink.value = null
+                }
+
+
 
                 val startListening = remember {
                     { hands: Boolean ->
@@ -178,12 +196,19 @@ class MainActivity : ComponentActivity() {
                             WearApp.Graph.stt.start(lifecycleScope).collect { ev ->
                                 when (ev) {
                                     is VoskEvent.Partial -> {
-                                        partial.value = ev.text
-                                        if (handsFree.value) vad.value = Vad.onPartial(vad.value, ev.text, System.currentTimeMillis())
+                                        val sink = voiceSink.value
+                                        if (sink != null) sink(ev.text)
+                                        else {
+                                            partial.value = ev.text
+                                            if (handsFree.value) vad.value = Vad.onPartial(vad.value, ev.text, System.currentTimeMillis())
+                                        }
                                     }
                                     is VoskEvent.Final -> {
                                         partial.value = ""
-                                        if (ev.text.isNotBlank()) {
+                                        if (ev.text.isBlank()) return@collect
+                                        val sink = voiceSink.value
+                                        if (sink != null) sink(ev.text) // a query, not a prompt
+                                        else {
                                             sttHistory.add(ev.text) // stays visible while the mic runs on
                                             session.ask(ev.text)
                                         }
@@ -214,6 +239,12 @@ class MainActivity : ComponentActivity() {
                     else micPermission.launch(Manifest.permission.RECORD_AUDIO)
                 }
 
+                // A field/overlay takes the mic: same gate, but the text goes to the sink.
+                fun startVoiceInto(sink: (String) -> Unit) {
+                    voiceSink.value = sink
+                    startListeningGate(false)
+                }
+
                 // Hands-free watchdog (follow-up A): ≥1 word + ~1.2 s silence → finalize & send.
                 LaunchedEffect(listening.value, handsFree.value) {
                     if (!listening.value || !handsFree.value) return@LaunchedEffect
@@ -227,6 +258,23 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // THE ORB DIAL map (SPEC §12.1) — live so a Settings ▸ Interface remap lands on the
+                // dial instantly. Index 0 = 12:00, clockwise.
+                val dialSlots by settings.orbSlots.collectAsState()
+                // Skill rows arrive INSIDE the pushed catalog (watchkit reads /v1/skills where the
+                // watch cannot, SPEC §12.3), so the watch never fetches them separately.
+
+                // SLASH OVERLAY (SPEC §12.3): six-key recents mirror (on-watch memory) + the
+                // gateway-pushed command list (Settings ▸ Interface ▸ Command catalog JSON / the
+                // `slash_catalog` dev hook). Null = never opened → the built-in catalog ships.
+                val slash by settings.commandUsage.collectAsState()
+                val catalogJson by settings.slashCatalogJson.collectAsState()
+                var commandsOpen by remember { mutableStateOf(false) }
+                var slashPrefill by remember { mutableStateOf<String?>(null) }
+                val commandEntries = remember(catalogJson) {
+                    CommandCatalog.merge(SlashCommands.BUILTIN, CommandCatalog.parse(catalogJson).entries)
+                }
+
                 // M5 deep-links: notification tap opens that chat; "Ask Hermes" tile tap jumps
                 // straight into hands-free listening (compose box when the mic isn't granted).
                 val link by deepLink.collectAsState()
@@ -237,6 +285,17 @@ class MainActivity : ComponentActivity() {
                         draft = ""; composing = false; speak.stop()
                         if (micGranted.value) startListening(true) else composing = true
                     }
+                }
+
+                // DEV RENDER HARNESS (SPEC §13.3): `-e render <case>` injects the canned answer and
+                // shows the chat, so one adb command + one screencap proves a media surface.
+                val devRender by WearApp.Graph.devRender.collectAsState()
+                LaunchedEffect(devRender) {
+                    val id = devRender ?: return@LaunchedEffect
+                    WearApp.Graph.devRender.value = null
+                    val case = dev.hermes.wearos.domain.RenderCase.of(id)
+                    session.injectAnswer(case?.markdown ?: "unknown case '$id' — try `-e render list`")
+                    screen = Screen.Chat
                 }
 
                 // Opening the sessions fast-path refreshes the gateway list (ask #2).
@@ -254,6 +313,87 @@ class MainActivity : ComponentActivity() {
                     session.openChat(id); screen = Screen.Chat
                 }
 
+                // SLASH OVERLAY (SPEC §12.3): catalog = built-ins ⊕ watchkit's pushed rows ⊕ this
+                // agent's skills; recents = the on-watch usage map. The Runs API does not dispatch
+                // slashes, so `honored` says what the WATCH will do — never a fake round trip.
+                val overlayState = CommandOverlayState(
+                    entries = commandEntries,
+                    recents = CommandUsage.topRecents(slash, System.currentTimeMillis()),
+                    capabilities = CommandCatalog.parse(catalogJson).capabilities,
+                )
+                fun openCommands(prefill: String?) {
+                    slashPrefill = prefill
+                    commandsOpen = true
+                    uiScope.launch { settings.refreshSlashCatalog(profile) }
+                }
+                fun runCommand(e: CommandEntry) {
+                    uiScope.launch { settings.recordCommand(e.name) }
+                    when (e.honored) {
+                        CommandKind.Steer -> {
+                            commandsOpen = false
+                            endListening()
+                            editor = EditorReq(text = "/steer ", original = "", hint = "guidance for the run in flight")
+                        }
+                        CommandKind.Stop -> { commandsOpen = false; session.stopActiveRun() }
+                        CommandKind.Side -> {
+                            commandsOpen = false
+                            endListening()
+                            editor = EditorReq(text = "/btw ", original = "", hint = "side thread — main chat stays clean")
+                        }
+                        CommandKind.Fork -> { commandsOpen = false; session.ask("/fork") }
+                        CommandKind.Model -> { commandsOpen = false; session.ask("/model") }
+                        CommandKind.Skill -> { commandsOpen = false; session.ask(e.invocation) }
+                        CommandKind.Status -> { commandsOpen = false; session.ask("gateway health?") }
+                        CommandKind.Client -> {
+                            commandsOpen = false
+                            when (e.name) {
+                                "sessions" -> screen = Screen.Sessions
+                                "chats" -> screen = Screen.Chats
+                                "agents" -> { showAgents = true; uiScope.launch { agents.refresh() } }
+                                "settings" -> screen = Screen.Settings
+                                "new" -> { session.createChat(); screen = Screen.Chat }
+                                else -> session.ask(e.invocation)
+                            }
+                        }
+                        else -> {
+                            commandsOpen = false
+                            editor = EditorReq(text = e.invocation, original = "", hint = "sends as a prompt")
+                        }
+                    }
+                }
+                fun submitMaybeSlash(text: String) {
+                    val t = text.trim()
+                    val cmd = if (t.startsWith("/")) t.substringAfter("/").substringBefore(" ").lowercase() else null
+                    val entry = cmd?.let { c -> commandEntries.firstOrNull { it.name == c } }
+                    if (entry == null) { session.ask(t); return }
+                    runCommand(entry)
+                }
+
+                // THE DIAL ROUTER (SPEC §12.1): eight directions, every one remappable in
+                // Settings ▸ Interface, all of them lands here. Lanes the branch-2 voice work owns
+                // say so plainly instead of silently doing nothing.
+                fun handleLane(lane: Lane) {
+                    when (lane) {
+                        Lane.Keyboard -> {
+                            // The drag-up that already shipped, now slot 0 of the dial.
+                            endListening()
+                            editor = EditorReq(text = draft, original = "", hint = "type or swipe…")
+                        }
+                        Lane.Mute -> speak.setVoiceEnabled(!voiceOut)
+                        Lane.RecordHi -> sttStatus.value = "record→pc STT: branch 2 (§13.4)"
+                        Lane.VoiceNotes -> sttStatus.value = "voice-note ring: branch 2 (§13.4)"
+                        Lane.Commands -> openCommands(null)
+                        Lane.Chats -> screen = Screen.Chats
+                        Lane.Sessions -> screen = Screen.Sessions
+                        Lane.Agents -> {
+                            showAgents = true
+                            uiScope.launch { agents.refresh() }
+                        }
+                        Lane.None -> Unit
+                    }
+                }
+
+
                 HermesScaffold {
                     VoiceHost(session, speak)
                     when (screen) {
@@ -262,14 +402,21 @@ class MainActivity : ComponentActivity() {
                             composing = composing, draft = draft,
                             markdown = markdownOn,
                             onDraftChange = { draft = it },
-                            onSend = { session.ask(draft); draft = ""; composing = false },
+                            onSend = {
+                                // A draft that is ONE slash command opens the overlay instead of
+                                // asking — typing "/st" then send is the keyboard-native way in.
+                                if (SlashCommands.looksLikeSlashDraft(draft)) {
+                                    openCommands(draft.trim().removePrefix("/").takeIf { it.isNotBlank() })
+                                    draft = ""; composing = false
+                                } else {
+                                    session.ask(draft); draft = ""; composing = false
+                                }
+                            },
                             listening = listening.value || devPtt != null,
                             pttPartial = partial.value.ifBlank { devPtt ?: "" },
                             pttHistory = if (devPtt != null) emptyList() else sttHistory.toList(),
                             handsFree = handsFree.value,
                             micGranted = micGranted.value,
-                            profile = profile,
-                            onToggleVoice = { speak.setVoiceEnabled(!voiceOut) },
                             onApprove = { session.respondApproval(it) },
                             onOpenChats = { screen = Screen.Chats },
                             onOpenSessions = { screen = Screen.Sessions },
@@ -325,12 +472,19 @@ class MainActivity : ComponentActivity() {
                                 if (next != settings.fontScale.value) uiScope.launch { settings.setFontScale(next) }
                             },
                             onFontScaleReset = { uiScope.launch { settings.setFontScale(FontScale.DEFAULT) } },
-                            // DRAG-UP THE ORB = manual GBoard entry (owner ask): the SAME editor the
-                            // mic-overlay keyboard chip opens — IME ladder + always-visible send.
-                            onOrbDragUp = {
-                                endListening()
-                                editor = EditorReq(text = draft, original = "", hint = "type or swipe…")
-                            },
+                            slots = dialSlots,
+                            onDial = { lane -> handleLane(lane) },
+                            commands = DialCommands(
+                                open = commandsOpen,
+                                state = overlayState,
+                                prefill = slashPrefill,
+                                voiceOn = listening.value && voiceSink.value != null,
+                                onVoiceStart = { startVoiceInto { t -> slashPrefill = t } },
+                                onVoiceStop = { endListening() },
+                                onPick = { e -> runCommand(e) },
+                                onPrompt = { t -> commandsOpen = false; submitMaybeSlash(t) },
+                                onDismiss = { commandsOpen = false },
+                            ),
                         )
                         Screen.Chats -> ExitOnSwipeBack(onBack = { screen = Screen.Chat }) {
                             ChatsScreen(
@@ -508,8 +662,6 @@ private fun ChatBody(
     pttHistory: List<String>,
     handsFree: Boolean,
     micGranted: Boolean,
-    profile: String,
-    onToggleVoice: () -> Unit,
     onApprove: (String) -> Unit,
     onOpenChats: () -> Unit,
     onOpenSessions: () -> Unit,
@@ -524,7 +676,11 @@ private fun ChatBody(
     onHoldEnd: () -> Unit,
     onFontScalePinch: (Float) -> Unit,
     onFontScaleReset: () -> Unit,
-    onOrbDragUp: () -> Unit,
+    /** THE ORB DIAL (SPEC §12.1): the eight lanes as the owner mapped them (Settings ▸ Interface). */
+    slots: List<Lane>,
+    onDial: (Lane) -> Unit,
+    /** The 6:00 slash overlay, when open (SPEC §12.3). */
+    commands: DialCommands,
 ) {
     // LAYOUT D (OWNER-APPROVED mockup varD.png): the chat fills the round screen and the bottom
     // bar is no longer a Row — it is the computed FOUR-CIRCLE CLUSTER (domain/BottomLayout):
@@ -637,7 +793,6 @@ private fun ChatBody(
                     state = state,
                     onApprove = onApprove,
                     voiceEnabled = voiceOut,
-                    onToggleVoice = onToggleVoice,
                     voiceStatus = voiceStatus,
                     chatLabel = state.activeChatLabel,
                     onOpenChats = onOpenChats,
@@ -655,17 +810,14 @@ private fun ChatBody(
                 cluster = cluster,
                 viewportW = vpW,
                 viewportH = vpH,
-                profile = profile,
                 listening = listening,
                 running = state.busy,
                 voiceOut = voiceOut,
-                onToggleVoice = onToggleVoice,
-                onAgent = onOpenAgents,
-                onSessions = onOpenSessions,
+                slots = slots,
+                onDial = onDial,
                 onTap = onOrbTap,
                 onHoldStart = onHoldStart,
                 onHoldEnd = onHoldEnd,
-                onDragUp = onOrbDragUp,
             )
         }
         // Full-screen prompt editor (asks #5/#6) LAST in the Box = topmost: covers chat + orb bar,
@@ -679,78 +831,134 @@ private fun ChatBody(
                 onSend = { text -> onEditorSend(req.original, text) },
             )
         }
+        // THE SLASH OVERLAY (dial 6:00) — above everything, mic included.
+        if (commands.open) {
+            CommandsOverlay(
+                state = commands.state,
+                prefill = commands.prefill,
+                voiceOn = commands.voiceOn,
+                onVoiceStart = commands.onVoiceStart,
+                onVoiceStop = commands.onVoiceStop,
+                onPick = commands.onPick,
+                onPrompt = commands.onPrompt,
+                onDismiss = commands.onDismiss,
+            )
+        }
     }
 }
+
+/**
+ * Everything the 6:00 overlay needs, bundled so ChatBody's signature stays readable: the merged
+ * catalog + recents, the prefill (a typed `/st…` draft or a dictated query), and the three ways an
+ * entry leaves (pick / prompt / dismiss).
+ */
+private data class DialCommands(
+    val open: Boolean,
+    val state: CommandOverlayState,
+    val prefill: String?,
+    val voiceOn: Boolean,
+    val onVoiceStart: () -> Unit,
+    val onVoiceStop: () -> Unit,
+    val onPick: (CommandEntry) -> Unit,
+    val onPrompt: (String) -> Unit,
+    val onDismiss: () -> Unit,
+)
 
 /** Request to open the full-screen editor: prefill, the text it edits ("" = fresh prompt), hint. */
 private data class EditorReq(val text: String, val original: String, val hint: String)
 
 /**
- * LAYOUT D — the bottom cluster (owner-approved varD.png): the TALK orb sits on its approved
- * circle (grounded off the bottom edge, ALL old behavior inside TalkOrb: hold PTT, tap hands-free,
- * red STOP morph + ring, listening pulse), the AGENT/SESSIONS satellites are small round chips ON
- * their circles with caption3 labels 8–10 px above them (dynamic: agent short-name / "gw"), and
- * the MUTE satellite rides the right arc grazing the edge — speaker glyphs, THE single mute toggle
- * (old below-orb pill removed). Geometry comes pre-computed from domain/BottomLayout; this file
- * only converts px → dp. No IconButtons anywhere (wear-compose 1.4.1 has none).
+ * THE ORB, ALONE (owner batch 3: "get all but the orb button off of the main screen"). The
+ * AGENT/SESSIONS/MUTE satellites are GONE from the chat screen — each one is now a drag direction
+ * on the disc (SPEC §12.1), so this composable is the orb, its dial ring, and the contextual rise
+ * that makes the crowded lower arc reachable:
+ *
+ *  - [TalkOrb] owns the raw pointer stream (tap = hands-free, hold = PTT, drag = vectors out).
+ *  - [OrbDial] decides which of the eight wedges a vector means, whether the release cancels, and
+ *    whether the disc should rise; the ring icons live FARTHER out than the activation gate, so a
+ *    learner always drags toward something visible (see ui/OrbDialOverlay).
+ *  - The rise animates the orb's own center (110 ms) and the ring follows the animated center, so
+ *    the icons never detach from the disc they belong to. Leaving the lower arc settles it back.
+ *
+ * Geometry still comes pre-computed from domain/BottomLayout (which keeps the satellite circles for
+ * the mockup + its regression tests); this file only converts px → dp.
  */
 @Composable
 private fun OrbCluster(
     cluster: BottomLayout.Cluster,
     viewportW: Float,
     viewportH: Float,
-    profile: String,
     listening: Boolean,
     running: Boolean,
     voiceOut: Boolean,
-    onToggleVoice: () -> Unit,
-    onAgent: () -> Unit,
-    onSessions: () -> Unit,
+    slots: List<Lane>,
+    onDial: (Lane) -> Unit,
     onTap: () -> Unit,
     onHoldStart: () -> Unit,
     onHoldEnd: () -> Unit,
-    onDragUp: () -> Unit,
 ) {
     val density = LocalDensity.current
-    fun dpOf(spot: BottomLayout.Spot): Dp = with(density) { (spot.r * 2f).toDp() }
-    // TALK ORB — the Hermes disc on the big circle (recolored inside TalkOrb: #0D1117 + glyph).
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val scale = OrbDial.scaleFor(minOf(viewportW, viewportH))
+    var armed by remember { mutableStateOf(false) }
+    var activeSlot by remember { mutableStateOf(-1) }
+    var risen by remember { mutableStateOf(false) }
+    val orbCy by androidx.compose.animation.core.animateFloatAsState(
+        if (risen) OrbDial.risenCenterY(cluster.talk.cy, viewportH) else cluster.talk.cy,
+        androidx.compose.animation.core.tween(110),
+        label = "orbRise",
+    )
+    // RING FIRST so the disc paints over its own center (the caption inside the overlay is the
+    // one label that survives every direction, including the crowded lower arc).
+    OrbDialOverlay(
+        slots = slots,
+        orbCxPx = cluster.talk.cx,
+        orbCyPx = orbCy,
+        scale = scale,
+        activeSlot = if (armed) activeSlot else -1,
+        visible = armed,
+        voiceOut = voiceOut,
+    )
     TalkOrb(
         listening = listening,
         running = running,
-        diameter = dpOf(cluster.talk),
-        modifier = Modifier.onSpot(cluster.talk),
+        diameter = with(density) { (cluster.talk.r * 2f).toDp() },
+        modifier = Modifier.offset {
+            IntOffset(
+                (cluster.talk.cx - cluster.talk.r).roundToInt(),
+                (orbCy - cluster.talk.r).roundToInt(),
+            )
+        },
         onTap = onTap,
         onHoldStart = onHoldStart,
         onHoldEnd = onHoldEnd,
-        onDragUp = onDragUp,
+        dialScale = scale,
+        onDialArm = {
+            armed = true; activeSlot = -1; risen = false
+        },
+        onDialMove = { dx, dy ->
+            if (OrbDial.isCancel(dx, dy, scale)) {
+                activeSlot = -1; risen = false // finger came home: nothing is aimed, no rise
+            } else {
+                val slot = OrbDial.slotAt(OrbDial.angleOf(dx, dy))
+                if (slot != activeSlot) {
+                    activeSlot = slot
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                }
+                risen = OrbDial.needsRise(dx, dy, scale)
+            }
+        },
+        onDialEnd = { dx, dy ->
+            armed = false; activeSlot = -1; risen = false
+            if (!OrbDial.isCancel(dx, dy, scale)) {
+                val lane = OrbDial.slotFor(slots, OrbDial.slotAt(OrbDial.angleOf(dx, dy)))
+                if (lane != Lane.None) {
+                    Log.d("HermesWear", "dial lane=${lane.id} slot=${OrbDial.slotAt(OrbDial.angleOf(dx, dy))}")
+                    onDial(lane)
+                }
+            }
+        },
     )
-    // AGENT (left arc): glyph chip + its dynamic short-name label ABOVE.
-    RoundBarChip(glyph = "👤", tag = "agents", size = dpOf(cluster.agent), modifier = Modifier.onSpot(cluster.agent), onClick = onAgent)
-    SpotLabel(ProfileLogic.shortLabel(profile), cluster.agent, viewportW, viewportH)
-    // SESSIONS (right arc): glyph chip + the short gateway label ABOVE.
-    RoundBarChip(glyph = "≡", tag = "gw sessions", size = dpOf(cluster.sessions), modifier = Modifier.onSpot(cluster.sessions), onClick = onSessions)
-    SpotLabel("gw", cluster.sessions, viewportW, viewportH)
-    // MUTE satellite — the right-arc speaker toggle, same AppSettings-persisted speak-aloud state
-    // the header chip drives (the old below-orb pill is GONE: exactly one bottom mute affordance).
-    Box(
-        modifier = Modifier
-            .onSpot(cluster.mute)
-            .size(dpOf(cluster.mute))
-            .clip(CircleShape)
-            .background(
-                if (voiceOut) MaterialTheme.colors.surface.copy(alpha = 0.45f)
-                else MaterialTheme.colors.surface.copy(alpha = 0.18f)
-            )
-            .clickable(onClickLabel = if (voiceOut) "mute speak-aloud" else "unmute speak-aloud") { onToggleVoice() },
-        contentAlignment = Alignment.Center,
-    ) {
-        // Glyph reads inside the 24r circle: emoji at caption1, muted state dimmed (reads at a glance).
-        Text(
-            if (voiceOut) "🔊" else "🔇",
-            style = MaterialTheme.typography.caption1,
-            color = MaterialTheme.colors.onBackground.copy(alpha = if (voiceOut) 0.95f else 0.5f),
-        )
-    }
 }
 
 /** Offset a child so it EXACTLY covers a BottomLayout circle (top-left = center − r, in px). */
@@ -794,62 +1002,6 @@ private fun Modifier.rawDoubleTap(onDoubleTap: () -> Unit): Modifier = pointerIn
                 }
             }
         }
-    }
-}
-
-/**
- * caption3 label centered on a circle's x, baseline sitting 8–10 ref-px ABOVE the circle top
- * (BottomLayout.labelBottomY). Fixed-height bottom-aligned box → exact bottom placement without
- * measuring the text; long agent names ellipsize like the old bar labels did.
- */
-@Composable
-private fun SpotLabel(
-    text: String,
-    spot: BottomLayout.Spot,
-    viewportW: Float,
-    viewportH: Float,
-) {
-    val density = LocalDensity.current
-    val boxH = 18.dp
-    val boxW = with(density) { (spot.r * 2f + 56f).toDp() }
-    val labelBottom = BottomLayout.labelBottomY(spot, viewportW, viewportH)
-    Box(
-        modifier = Modifier
-            .offset {
-                IntOffset(
-                    (spot.cx - with(density) { boxW.toPx() } / 2f).roundToInt(),
-                    (labelBottom - with(density) { boxH.toPx() }).roundToInt(),
-                )
-            }
-            .size(width = boxW, height = boxH),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.caption3,
-            color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
-            maxLines = 1,
-            // Round-safe: the circle narrows at label height, so long names ellipsize instead of
-            // spilling under the round clip ("default" → "defau…").
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 72.dp),
-            textAlign = TextAlign.Center,
-        )
-    }
-}
-
-/** One small round secondary button ON a BottomLayout circle (chip + dynamic glyph, no IconButton). */
-@Composable
-private fun RoundBarChip(glyph: String, tag: String, size: Dp, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(
-        modifier = modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(MaterialTheme.colors.surface.copy(alpha = 0.45f))
-            .clickable(onClickLabel = tag, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(glyph, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.onBackground)
     }
 }
 

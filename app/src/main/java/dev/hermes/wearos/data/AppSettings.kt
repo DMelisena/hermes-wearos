@@ -10,6 +10,13 @@ import androidx.datastore.preferences.preferencesDataStore
 import dev.hermes.wearos.domain.FontScale
 import dev.hermes.wearos.domain.Gateway
 import dev.hermes.wearos.domain.GatewayModel
+import dev.hermes.wearos.domain.CommandCatalog
+import dev.hermes.wearos.domain.CommandStat
+import dev.hermes.wearos.domain.CommandUsage
+import dev.hermes.wearos.domain.Lane
+import dev.hermes.wearos.domain.OrbDial
+import dev.hermes.wearos.net.HermesApi
+import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.domain.ProfileLogic
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -57,6 +64,11 @@ class AppSettings(private val context: Context) {
         // changes. Upgrade is additive: an updated watch migrates on first launch and keeps
         // working even if it downgrades.
         private val KEY_GATEWAYS = stringPreferencesKey("gateways_json")
+        // The ORB DIAL's slot map (SPEC §12.1): the eight lane ids, clockwise from 12:00.
+        private val KEY_ORB_SLOTS = stringPreferencesKey("orb_slots")
+        // SLASH OVERLAY (SPEC §12.3): usage memory + the last pushed gateway command catalog.
+        private val KEY_SLASH_USAGE = stringPreferencesKey("slash_usage")
+        private val KEY_SLASH_CATALOG = stringPreferencesKey("slash_catalog_json")
         private val KEY_GW_SELECTED = stringPreferencesKey("gateway_selected")
     }
 
@@ -158,6 +170,75 @@ class AppSettings(private val context: Context) {
     suspend fun setMarkdownRendering(v: Boolean) {
         context.dataStore.edit { it[KEY_MARKDOWN] = v }
         _markdownEnabled.value = v
+    }
+
+    /**
+     * THE ORB DIAL MAP (SPEC §12.1): eight lanes, index 0 = 12:00 going clockwise. Owner batch 3 —
+     * the orb is the ONLY control on the chat screen, so "which direction does what" is a matter of
+     * personal muscle memory, and Settings ▸ Interface lets every direction be remapped (or blanked
+     * to `Lane.None`). Persisted as the comma id-list `OrbDial.encode`; StateFlow mirror so a
+     * Settings edit lands on the dial the instant the wrist is back on the chat.
+     */
+    private val _orbSlots = MutableStateFlow(OrbDial.DEFAULT_SLOTS)
+    val orbSlots: StateFlow<List<Lane>> = _orbSlots
+    suspend fun orbSlotsRaw(): String = context.dataStore.data.first()[KEY_ORB_SLOTS] ?: ""
+    suspend fun loadOrbSlots() { _orbSlots.value = OrbDial.decode(orbSlotsRaw()) }
+    suspend fun setOrbSlots(slots: List<Lane>) {
+        context.dataStore.edit { it[KEY_ORB_SLOTS] = OrbDial.encode(slots) }
+        _orbSlots.value = OrbDial.decode(orbSlotsRaw())
+    }
+    /** Remap ONE direction (Settings ▸ Interface rows) — the only mutation the dial UI needs. */
+    suspend fun setOrbSlot(slot: Int, lane: Lane) {
+        val next = _orbSlots.value.toMutableList()
+        val i = ((slot % OrbDial.SLOT_COUNT) + OrbDial.SLOT_COUNT) % OrbDial.SLOT_COUNT
+        next[i] = lane
+        setOrbSlots(next)
+    }
+
+    /**
+     * SLASH-OVERLAY MEMORY (SPEC §12.3): the on-watch usage map that ranks the overlay's RECENTS
+     * section (`CommandUsage` does the math; this is the persistence + live mirror). StateFlow so
+     * the overlay re-ranks the instant a command is chosen — the owner's "remember the ones I use
+     * most" is allowed to be visible immediately, and it survives restarts without a server.
+     */
+    private val _commandUsage = MutableStateFlow<Map<String, CommandStat>>(emptyMap())
+    val commandUsage: StateFlow<Map<String, CommandStat>> = _commandUsage
+    suspend fun loadCommandUsage() {
+        _commandUsage.value = CommandUsage.decode(context.dataStore.data.first()[KEY_SLASH_USAGE])
+    }
+    suspend fun recordCommand(name: String) {
+        val next = CommandUsage.record(_commandUsage.value, name, System.currentTimeMillis())
+        context.dataStore.edit { it[KEY_SLASH_USAGE] = CommandUsage.encode(next) }
+        _commandUsage.value = CommandUsage.decode(context.dataStore.data.first()[KEY_SLASH_USAGE])
+    }
+
+    /**
+     * PUSHED COMMAND CATALOG (SPEC §12.3): the watchkit `GET /catalog` body (or the dev
+     * `slash_catalog` hook's hand-written JSON) kept verbatim so the overlay can show gateway rows
+     * offline and refresh them when the helper is reachable. null = never fetched → built-ins only.
+     */
+    private val _slashCatalogJson = MutableStateFlow<String?>(null)
+    val slashCatalogJson: StateFlow<String?> = _slashCatalogJson
+    suspend fun slashCatalogRaw(): String? = context.dataStore.data.first()[KEY_SLASH_CATALOG]
+    suspend fun loadSlashCatalog() { _slashCatalogJson.value = slashCatalogRaw() }
+    suspend fun setSlashCatalogJson(raw: String?) {
+        context.dataStore.edit { if (raw.isNullOrBlank()) it.remove(KEY_SLASH_CATALOG) else it[KEY_SLASH_CATALOG] = raw }
+        _slashCatalogJson.value = slashCatalogRaw()
+    }
+
+    /** Fetch the catalog for [agent] from watchkit and store it; returns the row count (0 = kept
+     *  whatever was there, the built-in floor always stands). */
+    suspend fun refreshSlashCatalog(agent: String): Int {
+        val resp = Watchkit.catalog(agent)
+        val rows = CommandCatalog.fromWatchkit(resp.commands)
+        // Capabilities come from the GATEWAY when we can reach it (this watch holds the active
+        // profile's key — the only client that can ask); watchkit's own flags are the fallback for
+        // an unreachable gateway. Unknown is better than wrong: absent = rendered enabled.
+        val liveCaps = runCatching { HermesApi(baseUrl(), token()).capabilities() }.getOrDefault(emptyMap())
+        val caps = if (liveCaps.isNotEmpty()) liveCaps else resp.capabilities
+        if (rows.isEmpty() && caps.isEmpty()) return 0
+        setSlashCatalogJson(CommandCatalog.gatewayJson(rows, caps))
+        return rows.size
     }
 
     /**
