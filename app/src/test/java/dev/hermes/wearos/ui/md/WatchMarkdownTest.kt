@@ -88,6 +88,22 @@ class WatchMarkdownTest {
         assertEquals(MdBlock.Image("red square", "/home/user/.hermes/red.png"), blocks[1])
     }
 
+    @Test fun mediaAttachmentLineBecomesImageBlockNamedByFile() {
+        // The gateway/skill convention (`MEDIA:/abs/path`) — how the aurora renders arrive.
+        val text = "Maps attached.\n\nMEDIA: /home/user/.hermes/profiles/wear-demo/cache/scratch/aurora/aurora_map.png\n"
+        val blocks = WatchMarkdown.parse(text)
+        assertEquals(2, blocks.size)
+        assertEquals(
+            MdBlock.Image("aurora_map.png", " /home/user/.hermes/profiles/wear-demo/cache/scratch/aurora/aurora_map.png"),
+            blocks[1],
+        )
+    }
+
+    @Test fun partialMediaLineStaysParagraph() {
+        // Mid-stream the line is still arriving; it must not flash as a broken card.
+        assertTrue(WatchMarkdown.parse("MEDIA: /home/user/.hermes/aur")[0] is MdBlock.Paragraph)
+    }
+
     @Test fun imageEmptyAltAndHttpTarget() {
         val b = WatchMarkdown.parse("![](https://example.com/a.webp)")[0] as MdBlock.Image
         assertEquals("", b.alt)

@@ -76,6 +76,10 @@ object WatchMarkdown {
     // (gateway paths are plain absolute paths); anything fancier stays literal paragraph text.
     private val IMAGE_LINE = Regex("^\\s*!\\[([^\\]]*)\\]\\(\\s*([^()\\s]+)(?:\\s+[\"'][^\"']*[\"'])?\\s*\\)\\s*$")
 
+    /** `MEDIA:/abs/path` — the gateway/skill attachment line convention (aurora/weather charts).
+     *  Only fires once the extension is fully on screen, so a mid-stream partial stays text. */
+    private val MEDIA_LINE = Regex("^\\s*MEDIA:\\s*(\\S+\\.(?:png|jpe?g|webp|gif))\\s*$", RegexOption.IGNORE_CASE)
+
     fun parse(text: String): List<MdBlock> {
         val lines = text.replace("\r\n", "\n").replace('\r', '\n').replace("\t", "    ").split('\n')
         val out = ArrayList<MdBlock>()
@@ -188,6 +192,16 @@ object WatchMarkdown {
             if (im != null) {
                 flushPara()
                 out += MdBlock.Image(im.groupValues[1].trim(), im.groupValues[2].trim())
+                i++; continue
+            }
+
+            // Gateway attachment convention: a bare `MEDIA:/abs/path` line from a skill (the
+            // aurora/weather renders speak this). Same card as ![](), alt = file name.
+            val med = MEDIA_LINE.matchEntire(line)
+            if (med != null) {
+                flushPara()
+                val p = med.groupValues[1]
+                out += MdBlock.Image(p.substringAfterLast('/'), p)
                 i++; continue
             }
 

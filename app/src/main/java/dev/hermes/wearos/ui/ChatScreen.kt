@@ -81,7 +81,19 @@ fun ChatScreen(
             hasStatus = state.status.isNotEmpty(),
             showEmptyHint = ChatAnchor.showEmptyHint(state.messages.size, state.live, state.approval != null),
         )
-        if (idx > 0) {
+        // HOLD (owner batch 7): while a run streams and the whole exchange still fits (nothing
+        // left to scroll to), the viewport HOLDS at the question — the incoming first lines are
+        // visible instead of force-pinned under the orb. Only once the answer overflows the
+        // circle does the classic tail-follow kick in.
+        val qRow = ChatAnchor.questionRow(
+            state.messages.indexOfLast { it.role == dev.hermes.wearos.domain.ChatMessage.Role.User },
+        )
+        val starting = state.busy && state.live.isEmpty()
+        val holding = state.busy && state.live.isNotEmpty() && !listState.canScrollForward
+        if (starting && qRow != null) {
+            // Pin the question at the list's Middle anchor — the answer grows downward from it.
+            listState.scrollToItem(qRow.coerceAtMost(listState.layoutInfo.totalItemsCount - 1), 0)
+        } else if (!holding && idx > 0) {
             // THE anchor (owner walkthrough): latest row must be on screen at the list's end.
             // wear-compose 1.4.1 ScalingLazyColumn facts measured on-device: scrollToItem(last, 0)
             // lands short (lazy composition hasn't laid the tail out yet), and the true list end
