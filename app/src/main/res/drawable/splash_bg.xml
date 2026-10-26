@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cold-start window background = her self-portrait edge to edge, so the FIRST pixels the
+     system paints are already the splash (no icon bubble, no black gap). The Compose overlay
+     in HermesScaffold continues the same image and fades it. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <bitmap
+            android:src="@drawable/splash_spirit"
+            android:gravity="fill" />
+    </item>
+</layer-list>

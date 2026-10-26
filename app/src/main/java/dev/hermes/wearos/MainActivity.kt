@@ -19,6 +19,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.draw.alpha
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -1273,15 +1277,38 @@ private fun HermesScaffold(content: @Composable ColumnScope.() -> Unit) {
     // every screen (MdText + message styles consume via LocalFontScale). Cards never read it.
     val fontScale by WearApp.Graph.settings.fontScale.collectAsState()
     CompositionLocalProvider(LocalFontScale provides fontScale) {
-        Scaffold(
-            timeText = { TimeText() },
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                content = content,
-            )
+        // SPLASH SPIRIT (owner 2026-10-26): her self-portrait — engraved by Comfy in the Hermes
+        // art style — flashes at launch, one quick "boom," then dissolves into the chat. The
+        // delay is the app's real warm-up window (config + session restore), not a fake gate;
+        // on a warm process it reads as an instant brand sting.
+        var spirit by remember { mutableStateOf(true) }
+        LaunchedEffect(Unit) {
+            delay(620)
+            spirit = false
+        }
+        val spiritA by animateFloatAsState(
+            if (spirit) 1f else 0f,
+            androidx.compose.animation.core.tween(200), label = "spirit",
+        )
+        Box(Modifier.fillMaxSize()) {
+            Scaffold(
+                timeText = { TimeText() },
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    content = content,
+                )
+            }
+            if (spiritA > 0.004f) {
+                Image(
+                    painter = painterResource(R.drawable.splash_spirit),
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().alpha(spiritA),
+                )
+            }
         }
     }
 }
