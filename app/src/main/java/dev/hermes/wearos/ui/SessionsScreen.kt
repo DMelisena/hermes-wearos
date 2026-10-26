@@ -2,10 +2,12 @@ package dev.hermes.wearos.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -19,6 +21,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.material.Button
@@ -59,6 +63,9 @@ fun SessionsScreen(
     onVoiceStart: () -> Unit = {},
     onVoiceStop: () -> Unit = {},
     onOpenLocal: (chatId: String) -> Unit = {},
+    // LONG-PRESS (owner: "hold a session — fork or delete, delete double-checked"): the sheet +
+    // its confirm live in MainActivity (they touch session + screen state); this file only asks.
+    onManage: (GatewaySessions.Info) -> Unit = {},
 ) {
     val shown = GatewaySessions.filterProfile(sessions, filter)
     val chips = buildList {
@@ -120,6 +127,7 @@ fun SessionsScreen(
                         if (h.watchChatId.isNotEmpty()) onOpenLocal(h.watchChatId)
                         else onOpen(h.id, h.title, h.profile)
                     },
+                    onManage = { onManage(GatewaySessions.Info(h.id, h.title, 0L, 0, h.profile)) },
                 )
             }
             return@ScalingLazyColumn
@@ -182,7 +190,12 @@ fun SessionsScreen(
             }
         }
         items(shown, key = { it.id }) { s ->
-            SessionRow(s, currentAgent = agent, onClick = { onOpen(s.id, s.title, s.profile) })
+            SessionRow(
+                s,
+                currentAgent = agent,
+                onClick = { onOpen(s.id, s.title, s.profile) },
+                onManage = { onManage(s) },
+            )
         }
         item {
             Button(
@@ -202,15 +215,16 @@ fun SessionsScreen(
  * recognizes the chat instead of trusting a name. The trailing tag is provenance: ⌚ a chat this
  * watch owns (opens instantly), otherwise which profile's store it lives in.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun SearchHitRow(hit: SessionHit, onClick: () -> Unit) {
+private fun SearchHitRow(hit: SessionHit, onClick: () -> Unit, onManage: () -> Unit = {}) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 6.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colors.surface.copy(alpha = 0.25f))
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onManage)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -245,8 +259,14 @@ private fun SearchHitRow(hit: SessionHit, onClick: () -> Unit) {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun SessionRow(s: GatewaySessions.Info, currentAgent: String, onClick: () -> Unit) {
+private fun SessionRow(
+    s: GatewaySessions.Info,
+    currentAgent: String,
+    onClick: () -> Unit,
+    onManage: () -> Unit = {},
+) {
     val watchOwn = ProfileLogic.isWatchSession(s.id)
     val foreign = s.profile.isNotEmpty() && s.profile != currentAgent
     Row(
@@ -255,7 +275,7 @@ private fun SessionRow(s: GatewaySessions.Info, currentAgent: String, onClick: (
             .padding(horizontal = 6.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colors.surface.copy(alpha = 0.25f))
-            .clickable(onClick = onClick)
+            .combinedClickable(onClickLabel = "open session", onClick = onClick, onLongClick = onManage)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -280,6 +300,119 @@ private fun SessionRow(s: GatewaySessions.Info, currentAgent: String, onClick: (
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+    }
+}
+
+/**
+ * LONG-PRESS SHEET for a session row (owner: "click and hold on the session itself … fork or
+ * delete as options"). Same full-bleed dialog shape as `PromptActionSheet` (wear Buttons only).
+ * Fork copies INTO the current agent and opens the branch (see ChatSession.forkBrowserSession) —
+ * the button says so, because "fork" of a desktop chat is only interesting if you can keep
+ * talking in it.
+ */
+@Composable
+fun SessionActionSheet(
+    title: String,
+    profileTag: String,
+    onFork: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .padding(top = 32.dp, bottom = 16.dp, start = 16.dp, end = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "“${title.take(48)}${if (title.length > 48) "…" else ""}”",
+                style = MaterialTheme.typography.caption3,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+            )
+            if (profileTag.isNotBlank()) {
+                Text(
+                    "in $profileTag",
+                    style = MaterialTheme.typography.caption3,
+                    color = MaterialTheme.colors.onBackground.copy(alpha = 0.4f),
+                )
+            }
+            Button(
+                onClick = onFork,
+                modifier = Modifier.size(width = 200.dp, height = 38.dp),
+            ) { Text("⑂ fork & open", style = MaterialTheme.typography.button) }
+            Button(
+                onClick = onDelete,
+                modifier = Modifier.size(width = 200.dp, height = 38.dp),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = MaterialTheme.colors.error.copy(alpha = 0.55f),
+                ),
+            ) { Text("🗑 delete", style = MaterialTheme.typography.button) }
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.size(width = 90.dp, height = 32.dp),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.35f),
+                ),
+            ) { Text("close", style = MaterialTheme.typography.button) }
+        }
+    }
+}
+
+/**
+ * THE DOUBLE CHECK (owner: "delete should double check"). Says plainly what dies: the session and
+ * every message in it, off the gateway box too — no undo, because there is no trash can in this
+ * design. Confirm is the far button; a mis-tap hits "keep".
+ */
+@Composable
+fun SessionDeleteSheet(
+    title: String,
+    profileTag: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .padding(top = 28.dp, bottom = 16.dp, start = 16.dp, end = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "delete “${title.take(40)}${if (title.length > 40) "…" else ""}”?",
+                style = MaterialTheme.typography.button,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+            )
+            Text(
+                "every message goes with it" + (if (profileTag.isNotBlank()) " in $profileTag" else "") +
+                    " — no undo",
+                style = MaterialTheme.typography.caption3,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.55f),
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+            )
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier.size(width = 200.dp, height = 38.dp),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = MaterialTheme.colors.error.copy(alpha = 0.75f),
+                ),
+            ) { Text("🗑 delete forever", style = MaterialTheme.typography.button) }
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.size(width = 120.dp, height = 32.dp),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.35f),
+                ),
+            ) { Text("keep", style = MaterialTheme.typography.button) }
         }
     }
 }

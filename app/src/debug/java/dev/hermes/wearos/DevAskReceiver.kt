@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
  *  -e set_watchkit K, -e render_test, -e img_test, -e chat_new, -e open_chat <id>, -e chat_dump,
  *  -e body_status, -e body_push). UI-epic additions: -e agents_list, -e agent <name>,
  *  -e sessions_dump, -e resume_session <id> [-e resume_profile <p>], -e stop_mid_run [text], -e loc_status,
+ *  -e session_fork <id> / -e session_delete <id> (the Sessions long-press menu, see §12.4 follow-up),
  *  -e ptt_demo <partial|''> (forces the PTT overlay for screenshots),
  *  -e fontscale <1.4|reset> (persist+apply pinch font-scale without fingers),
  *  -e viewer_demo [scale] (open the media viewer on a generated card — sub-fit zoom proof;
@@ -146,6 +147,24 @@ class DevAskReceiver : BroadcastReceiver() {
                 Log.i("HermesWear", "dev: slash catalog pushed ($n rows, ${raw.length} chars)")
                 Toast.makeText(context, "commands: $n rows", Toast.LENGTH_SHORT).show()
             }
+            return
+        }
+        // SESSION MANAGEMENT (owner: long-press → fork/delete). The adb twins of the sheet:
+        // `-e session_fork <id>` copies the session into the current agent and opens it;
+        // `-e session_delete <id>` deletes it for real. The source profile is resolved from the
+        // cached Sessions row, so drive it with ids straight out of `-e sessions_dump` / the list.
+        intent?.getStringExtra("session_fork")?.let { id ->
+            WearApp.Graph.session.manageSessionById(id, fork = true) { ok, msg ->
+                Log.i("HermesWear", "dev: session_fork ${if (ok) "ok — $msg" else "FAILED — $msg"}")
+            }
+            Log.i("HermesWear", "dev: session_fork '$id' queued")
+            return
+        }
+        intent?.getStringExtra("session_delete")?.let { id ->
+            WearApp.Graph.session.manageSessionById(id, fork = false) { ok, msg ->
+                Log.i("HermesWear", "dev: session_delete ${if (ok) "ok — $msg" else "FAILED — $msg"}")
+            }
+            Log.i("HermesWear", "dev: session_delete '$id' queued")
             return
         }
         intent?.getStringExtra("open_chat")?.let { WearApp.Graph.session.openChat(it); return }

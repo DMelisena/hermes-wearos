@@ -245,6 +245,45 @@ object Watchkit {
     }
 
     /**
+     * SESSION FORK for the Sessions long-press menu (owner: "hold a session → fork or delete").
+     * watchkit WRITES `state.db` directly, which is what makes this work for every agent — the
+     * gateway's own fork/delete needs the SOURCE profile's key, and `default` never has one the
+     * watch could hold (SPEC §12.2). Throws — the sheet shows the message verbatim.
+     */
+    suspend fun forkSession(fromProfile: String, sessionId: String, toProfile: String, newId: String): ForkResult =
+        withContext(Dispatchers.IO) {
+            val cfg = _config.value
+            val body = "{\"profile\":${esc(fromProfile)},\"session_id\":${esc(sessionId)}," +
+                "\"to_profile\":${esc(toProfile)},\"new_id\":${esc(newId)}}"
+            val req = Request.Builder()
+                .url(cfg.baseUrl.toHttpUrl().newBuilder().addPathSegment("session_fork").build())
+                .post(body.toRequestBody(JSON_MEDIA))
+                .header("Authorization", "Bearer ${cfg.token}")
+                .build()
+            clientCall(req) { r ->
+                val text = r.body?.string().orEmpty()
+                if (!r.isSuccessful) throw ApiException(r.code, "fork ${r.code}: ${text.take(140)}")
+                ForkResult.parse(text)
+            }
+        }
+
+    /** SESSION DELETE (double-confirmed on the wrist before this fires). Already-gone = success. */
+    suspend fun deleteSession(profile: String, sessionId: String): DeleteResult = withContext(Dispatchers.IO) {
+        val cfg = _config.value
+        val body = "{\"profile\":${esc(profile)},\"session_id\":${esc(sessionId)}}"
+        val req = Request.Builder()
+            .url(cfg.baseUrl.toHttpUrl().newBuilder().addPathSegment("session_delete").build())
+            .post(body.toRequestBody(JSON_MEDIA))
+            .header("Authorization", "Bearer ${cfg.token}")
+            .build()
+        clientCall(req) { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw ApiException(r.code, "delete ${r.code}: ${text.take(140)}")
+            DeleteResult.parse(text)
+        }
+    }
+
+    /**
      * Cross-profile sessions (owner walkthrough): GET /sessions?profile=<p>&limit=<n> — watchkit
      * reads the profile's state.db directly (see server/watchkit). Body is the gateway
      * `/api/sessions` shape + a per-row `profile`, so GatewaySessions.parse handles it verbatim.
@@ -376,5 +415,25 @@ data class SearchResponse(val query: String = "", val data: List<SearchHitDto> =
         private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
         fun parse(text: String): SearchResponse =
             json.decodeFromJsonElement(SearchResponse.serializer(), json.parseToJsonElement(text))
+    }
+}
+
+/** `POST /session_fork` answer — [copied_messages] is what the toast reports. */
+@kotlinx.serialization.Serializable
+data class ForkResult(val id: String = "", val title: String = "", val copied_messages: Int = 0) {
+    companion object {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
+        fun parse(text: String): ForkResult =
+            json.decodeFromJsonElement(ForkResult.serializer(), json.parseToJsonElement(text))
+    }
+}
+
+/** `POST /session_delete` answer. */
+@kotlinx.serialization.Serializable
+data class DeleteResult(val id: String = "", val deleted: Boolean = false, val messages: Int = 0) {
+    companion object {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
+        fun parse(text: String): DeleteResult =
+            json.decodeFromJsonElement(DeleteResult.serializer(), json.parseToJsonElement(text))
     }
 }

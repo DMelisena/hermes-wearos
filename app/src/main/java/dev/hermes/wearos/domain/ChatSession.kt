@@ -745,6 +745,80 @@ class ChatSession(
         }
     }
 
+    /**
+     * LONG-PRESS → FORK (owner: "hold a session and get fork or delete, delete double-checked"):
+     * copies [info]'s session INTO THE CURRENT AGENT's store under a watch-shaped id
+     * (`<profile>-watch-x`, so the row keeps its ⌚ marker) and opens a chat on it — "continue this
+     * desktop chat on my wrist" becomes one hold. The copy is watchkit's, not the gateway fork:
+     * a gateway fork needs the SOURCE profile's key and most profiles have none (SPEC §12.2),
+     * `default` never will. Lineage rides the store (`parent_session_id`) and the title gets the
+     * " (fork)" suffix there; [SessionHistory] backfill shows the copied messages on open.
+     */
+    fun forkBrowserSession(info: GatewaySessions.Info, onDone: (Boolean, String) -> Unit) {
+        scope.launch {
+            val agent = settings.profileSync()
+            val newId = ProfileLogic.newSessionId(agent)
+            val res = runCatching { Watchkit.forkSession(info.profile.ifBlank { agent }, info.id, agent, newId) }
+            val r = res.getOrNull()
+            if (r == null || r.id.isBlank()) {
+                val why = (res.exceptionOrNull()?.message ?: "fork failed")
+                Log.w(TAG, "session fork ${info.id} failed: $why")
+                onDone(false, why.take(140))
+                return@launch
+            }
+            Log.i(TAG, "session forked ${info.id} -> $newId (${r.copied_messages} msgs)")
+            resumeGatewaySession(newId, SessionManage.chatLabel(info.title), agent)
+            onDone(true, "forked ${r.copied_messages} msgs")
+        }
+    }
+
+    /**
+     * LONG-PRESS → DELETE (the sheet double-confirms before this is ever called): a REAL delete in
+     * `state.db` via watchkit — messages then session, FTS triggers keep the search index honest —
+     * plus the local mirror chat if one exists (a ⌚ row deleted from the list must vanish from
+     * Chats too, and vice versa). "Already gone" counts as success: the button means *get it off
+     * my list*, whoever removed it meanwhile.
+     */
+    fun deleteBrowserSession(info: GatewaySessions.Info, onDone: (Boolean, String) -> Unit) {
+        scope.launch {
+            val res = runCatching { Watchkit.deleteSession(info.profile.ifBlank { settings.profileSync() }, info.id) }
+            if (res.isFailure) {
+                val why = (res.exceptionOrNull()?.message ?: "delete failed")
+                Log.w(TAG, "session delete ${info.id} failed: $why")
+                onDone(false, why.take(140))
+                return@launch
+            }
+            Log.i(TAG, "gateway session deleted ${info.id} (${res.getOrNull()?.messages ?: 0} msgs)")
+            store.loadIfNeeded()
+            SessionManage.localMirror(store.chats.value, info.id)?.let { mirror ->
+                if (mirror.id == store.activeId.value) {
+                    // The open chat IS the doomed mirror — `delete` refuses the active one, so move
+                    // to the freshest sibling first; with no sibling, a fresh draft takes the seat.
+                    val next = store.chats.value
+                        .filter { it.id != mirror.id && it.profile == mirror.profile }
+                        .maxByOrNull { it.updatedAt }
+                    if (next != null) {
+                        store.setActive(next.id)
+                        enterChat(next, store.loadTranscript(next.id))
+                    } else createChat(null)
+                }
+                store.delete(mirror.id)
+                Log.i(TAG, "watch mirror chat removed ${mirror.id}")
+            }
+            refreshGatewaySessions()
+            onDone(true, "deleted")
+        }
+    }
+
+    /** Dev-hook entry (`-e session_fork/-e session_delete <id>`): resolve the row's profile from the cached list. */
+    fun manageSessionById(sessionId: String, fork: Boolean, onDone: (Boolean, String) -> Unit) {
+        val id = sessionId.trim()
+        if (id.isEmpty()) return
+        val row = _gatewaySessions.value.firstOrNull { it.id == id }
+            ?: GatewaySessions.Info(id, "", 0L, 0, settings.profileSync())
+        if (fork) forkBrowserSession(row, onDone) else deleteBrowserSession(row, onDone)
+    }
+
     /** Max wait per watchkit probe; the daemon answers in tens of ms — this is a leash, not a budget. */
     private val historyFetchTimeoutMs = 10_000L
 

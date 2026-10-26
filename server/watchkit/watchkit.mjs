@@ -359,6 +359,128 @@ async function handleSearch(req, res, ip, params) {
   }
 }
 
+// ── session management (the watch's long-press menu: fork / delete) ─────────
+// The Sessions screen lets the owner hold a row and FORK it (branch into the CURRENT agent so the
+// watch can keep talking in the branch) or DELETE it (double-confirmed on the wrist). Why these
+// live here instead of riding the gateway API: the gateway DELETE only works for a profile whose
+// key the watch holds — and most profiles have none (SPEC §12.2) — while the desktop "computer"
+// chats live in the `default` store, which the watch can never sign for. watchkit runs beside
+// `state.db` and can write what it can read, so ONE uniform path works for every agent.
+//
+//   POST /session_fork   {profile, session_id, to_profile?, new_id, title?}
+//     → {object:"hermes.session.forked", id, profile, copied_messages, title}
+//   POST /session_delete {profile, session_id}
+//     → {object:"hermes.session.deleted", id, profile, deleted:true, messages:n}
+//
+// Fork copies session + messages column-wise (the INTERSECTION of source/target schemas, so a
+// version-skewed pair degrades instead of crashing), re-dates nothing, sets parent_session_id to
+// the origin (lineage the desktop already understands), suffixes the title " (fork)", and lands
+// the child hidden=0 archived=0 so it appears immediately. INSERTs flow through the store's own
+// FTS triggers, so the copy is searchable without anyone rebuilding an index. Cross-profile forks
+// ATTACH nothing: the source is read through its own handle and rows are inserted through the
+// target's — same fs, one busy_timeout each, no long-lived locks.
+//
+// Delete is a REAL delete (messages then session) — the watch double-confirms before calling, and
+// the FTS delete triggers keep the index honest. Sessions with a run in flight are the owner's own
+// risk (they just said "delete"); the store survives, a streaming watch run settles to an error.
+function dbCols(db, table) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+}
+
+async function openStore(profile, readOnly) {
+  const p = sessionDbPath(profile);
+  if (!p || !fs.existsSync(p)) return null;
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(p, readOnly ? { readOnly: true } : {});
+  db.exec('PRAGMA busy_timeout = 5000');
+  return db;
+}
+
+async function handleSessionFork(req, res, ip, body) {
+  const t0 = Date.now();
+  const profile = String(body.profile || 'default').trim();
+  const toProfile = String(body.to_profile || profile).trim();
+  const sessionId = String(body.session_id || '').trim();
+  const newId = String(body.new_id || '').trim();
+  if (!SESSIONS_PROFILE_RE.test(profile) || !SESSIONS_PROFILE_RE.test(toProfile))
+    return done(res, sendErr(res, 400, 'bad profile'), t0, ip, 'session_fork', 400);
+  if (!SESSION_ID_RE.test(sessionId) || !SESSION_ID_RE.test(newId))
+    return done(res, sendErr(res, 400, 'bad session id'), t0, ip, 'session_fork', 400);
+  let src = null, dst = null;
+  try {
+    src = await openStore(profile, true);
+    if (!src) return done(res, sendErr(res, 404, 'source store missing'), t0, ip, 'session_fork', 404);
+    const orig = src.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
+    if (!orig) return done(res, sendErr(res, 404, 'session not found'), t0, ip, 'session_fork', 404);
+    dst = await openStore(toProfile, false);
+    if (!dst) { // to-profile may be a never-booted agent — copying INTO a missing store is impossible here
+      return done(res, sendErr(res, 503, `target store missing for ${toProfile}`), t0, ip, 'session_fork', 503);
+    }
+    const clash = dst.prepare('SELECT 1 FROM sessions WHERE id = ?').get(newId);
+    if (clash) return done(res, sendErr(res, 409, 'that session id already exists'), t0, ip, 'session_fork', 409);
+    const sCols = dbCols(dst, 'sessions').filter((c) => c in orig);
+    const title = (String(body.title || '').trim() || `${String(orig.title || orig.id).slice(0, 70)} (fork)`);
+    const overrides = { id: newId, title, parent_session_id: sessionId, archived: 0, auto_archived: 0, hidden: 0, pinned: 0, ended_at: null, end_reason: null };
+    const vals = sCols.map((c) => (c in overrides ? overrides[c] : orig[c]));
+    dst.prepare(`INSERT INTO sessions (${sCols.map((c) => `"${c}"`).join(',')}) VALUES (${sCols.map(() => '?').join(',')})`)
+      .run(...vals);
+    // Messages: column intersection, fresh autoincrement ids, session re-pointed. The store's own
+    // triggers index the copies; `active`/`compacted` ride along so compaction state is faithful.
+    const dstMsgCols = dbCols(dst, 'messages');
+    const mShared = dbCols(src, 'messages').filter((c) => dstMsgCols.includes(c) && c !== 'id');
+    const rows = src.prepare(`SELECT ${mShared.map((c) => `"${c}"`).join(',')} FROM messages WHERE session_id = ? ORDER BY id`).all(sessionId);
+    let copied = 0;
+    if (rows.length) {
+      const ins = dst.prepare(`INSERT INTO messages (${mShared.map((c) => `"${c}"`).join(',')}) VALUES (${mShared.map(() => '?').join(',')})`);
+      dst.exec('BEGIN');
+      for (const r of rows) {
+        ins.run(...mShared.map((c) => (c === 'session_id' ? newId : r[c])));
+        copied += 1;
+      }
+      dst.exec('COMMIT');
+    }
+    const out = JSON.stringify({ object: 'hermes.session.forked', id: newId, profile: toProfile, from: sessionId, copied_messages: copied, title });
+    return done(res, send(res, 200, out), t0, ip, 'session_fork', 200, undefined, copied);
+  } catch (e) {
+    try { dst?.exec('ROLLBACK'); } catch { /* no txn */ }
+    return done(res, sendErr(res, 503, `fork failed: ${String(e?.message || e)}`.slice(0, 200)), t0, ip, 'session_fork', 503);
+  } finally {
+    try { src?.close(); } catch { /* gone */ }
+    try { dst?.close(); } catch { /* gone */ }
+  }
+}
+
+async function handleSessionDelete(req, res, ip, body) {
+  const t0 = Date.now();
+  const profile = String(body.profile || 'default').trim();
+  const sessionId = String(body.session_id || '').trim();
+  if (!SESSIONS_PROFILE_RE.test(profile))
+    return done(res, sendErr(res, 400, 'bad profile'), t0, ip, 'session_delete', 400);
+  if (!SESSION_ID_RE.test(sessionId))
+    return done(res, sendErr(res, 400, 'bad session id'), t0, ip, 'session_delete', 400);
+  let db = null;
+  try {
+    db = await openStore(profile, false);
+    if (!db) return done(res, sendErr(res, 404, 'store missing'), t0, ip, 'session_delete', 404);
+    const orig = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId);
+    if (!orig) {
+      // Already gone (deleted from the desktop meanwhile) is SUCCESS for a delete button.
+      return done(res, send(res, 200, JSON.stringify({ object: 'hermes.session.deleted', id: sessionId, profile, deleted: true, messages: 0 })), t0, ip, 'session_delete', 200, undefined, 0);
+    }
+    db.exec('BEGIN');
+    const n = db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId).changes;
+    db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+    db.exec('COMMIT');
+    const out = JSON.stringify({ object: 'hermes.session.deleted', id: sessionId, profile, deleted: true, messages: n });
+    return done(res, send(res, 200, out), t0, ip, 'session_delete', 200, undefined, n);
+  } catch (e) {
+    try { db?.exec('ROLLBACK'); } catch { /* no txn */ }
+    return done(res, sendErr(res, 503, `delete failed: ${String(e?.message || e)}`.slice(0, 200)), t0, ip, 'session_delete', 503);
+  } finally {
+    try { db?.close(); } catch { /* gone */ }
+  }
+}
+
 const STATE_DIR = path.join(WK_DIR, '.state');
 const SNAPSHOT_PATH = path.join(STATE_DIR, 'snapshot.json');
 const SNAPSHOT_MAX_BYTES = 256 * 1024;
@@ -850,6 +972,15 @@ const server = http.createServer(async (req, res) => {
       return done(res, send(res, 200, JSON.stringify({ agents })), t0, ip, 'agents', 200, undefined, agents.length);
     }
     // Cross-profile sessions for the watch's Sessions screen (owner: continue computer chats).
+    // Session management for the watch's long-press menu (SPEC §12.4 follow-up): fork any session
+    // into the current agent, delete any session. Bearer-guarded like every other route.
+    if (req.method === 'POST' && (url === '/session_fork' || url === '/session_delete')) {
+      let q;
+      try { q = JSON.parse((await readBody(req, JSON_MAX_BYTES)).toString('utf8')); }
+      catch { return done(res, sendErr(res, 400, 'bad json body'), Date.now(), ip, url.slice(1), 400); }
+      if (url === '/session_fork') return await handleSessionFork(req, res, ip, q);
+      return await handleSessionDelete(req, res, ip, q);
+    }
     // Full-text session search for the watch's Sessions screen (SPEC §12.4).
     if (req.method === 'GET' && url === '/search') {
       const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);

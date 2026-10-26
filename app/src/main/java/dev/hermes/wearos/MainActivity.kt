@@ -71,6 +71,8 @@ import dev.hermes.wearos.ui.LocalFontScale
 import dev.hermes.wearos.ui.PromptActionSheet
 import dev.hermes.wearos.ui.PromptEditorOverlay
 import dev.hermes.wearos.ui.PttOverlay
+import dev.hermes.wearos.ui.SessionActionSheet
+import dev.hermes.wearos.ui.SessionDeleteSheet
 import dev.hermes.wearos.ui.SessionsScreen
 import dev.hermes.wearos.ui.SettingsScreen
 import dev.hermes.wearos.ui.VoiceHost
@@ -154,6 +156,10 @@ class MainActivity : ComponentActivity() {
                 // OWNER BATCH 2 (asks #5/#6): long-pressed prompt → sheet → full-screen editor.
                 var promptSheet by remember { mutableStateOf<dev.hermes.wearos.domain.ChatMessage?>(null) }
                 var editor by remember { mutableStateOf<EditorReq?>(null) }
+                // SESSION LONG-PRESS (owner: "hold a session → fork or delete, double check"):
+                // the row arrives here; the sheets render at scaffold level like PromptActionSheet.
+                var manageSheet by remember { mutableStateOf<GatewaySessions.Info?>(null) }
+                var confirmDelete by remember { mutableStateOf<GatewaySessions.Info?>(null) }
 
                 // `-e open_editor "…"` (debug) opens the prompt editor prefilled — the system
                 // keyboard proof for owner batch 2 over adb; cleared once consumed.
@@ -555,6 +561,7 @@ class MainActivity : ComponentActivity() {
                                 onVoiceStart = { startVoiceInto { t -> sessQuery = t } },
                                 onVoiceStop = { endListening() },
                                 onOpenLocal = { id -> session.openChat(id); screen = Screen.Chat },
+                                onManage = { manageSheet = it },
                             )
                         }
                         Screen.Settings -> ExitOnSwipeBack(onBack = { screen = Screen.Chat }) {
@@ -620,6 +627,48 @@ class MainActivity : ComponentActivity() {
                             promptSheet = null
                         },
                         onDismiss = { promptSheet = null },
+                    )
+                }
+                manageSheet?.let { row ->
+                    SessionActionSheet(
+                        title = row.title.ifBlank { row.id },
+                        profileTag = row.profile,
+                        onFork = {
+                            manageSheet = null
+                            session.forkBrowserSession(row) { ok, msg ->
+                                // Worker-thread callback (Toast-crash guard, see switchAgent above);
+                                // success ALSO jumps into the fresh fork chat — the whole point.
+                                WearApp.Graph.runOnUi {
+                                    Toast.makeText(
+                                        context,
+                                        if (ok) "⑂ $msg" else "fork failed: $msg",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                    if (ok) screen = Screen.Chat
+                                }
+                            }
+                        },
+                        onDelete = { manageSheet = null; confirmDelete = row },
+                        onDismiss = { manageSheet = null },
+                    )
+                }
+                confirmDelete?.let { row ->
+                    SessionDeleteSheet(
+                        title = row.title.ifBlank { row.id },
+                        profileTag = row.profile,
+                        onConfirm = {
+                            confirmDelete = null
+                            session.deleteBrowserSession(row) { ok, msg ->
+                                WearApp.Graph.runOnUi {
+                                    Toast.makeText(
+                                        context,
+                                        if (ok) "🗑 session deleted" else "delete failed: $msg",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }
+                        },
+                        onDismiss = { confirmDelete = null },
                     )
                 }
             }
