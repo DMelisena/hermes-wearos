@@ -221,7 +221,9 @@ function readEnvKey(file) {
 
 function agentKeys() {
   const out = [];
-  const homeKey = readEnvKey(path.join(os.homedir(), '.env'));
+  // The `default` profile's env is the HERMES_HOME one (~/.hermes/.env) — same rule openStore
+  // uses for its state.db. `~/.env` was a wrong guess: it made the biggest store report no key.
+  const homeKey = readEnvKey(path.join(HERMES_HOME, '.env'));
   for (const profile of listAgents()) {
     const key = profile === 'default'
       ? (readEnvKey(path.join(PROFILES_DIR, 'default', '.env')) || homeKey)

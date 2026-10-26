@@ -333,6 +333,21 @@ Only `wear` carries a profile-scoped `API_SERVER_KEY` on the owner's gateway; `c
 URL-selected profile** and `_check_auth()` **fails closed** for named profiles — so the wear token
 that works perfectly on `/p/wear` is a 401 everywhere else:
 
+**RESOLVED 2026-10-26 — one login for the whole gateway (owner: *“it should just be like one
+login for the whole of my Hermes gateway”*).** The gateway's own doctrine (config_defaults +
+keygen hooks) is a plain `API_SERVER_KEY` per profile `.env`, so the box was unified the boring
+way: the `default` profile's key (`~/.hermes/.env`) rolled out as `API_SERVER_ENABLED=true` +
+`API_SERVER_KEY=<master>` into EVERY `profiles/<p>/.env` (symlinks skipped, never clobbering a
+later operator key). The gateway hot-reads env — verified live: a profile went key-required
+without a restart and authenticated calls answered right after; an ask on `default` from the
+wrist then streamed `error=false len=606` into the very desktop session the owner was watching.
+Two follow-throughs: watchkit's `agentKeys()` looked for the home key at `~/.env` — wrong path,
+it must be `~/.hermes/.env` (same `HERMES_HOME` rule `openStore` uses for `state.db`); fixed, and
+`GET /agent_keys` now reports all 11 profiles key-bearing. And the watch re-learns the map +
+`set_token <master>` — its resolve chain (agent key → gateway token → mirror token, §12.2)
+means a stale learned key self-heals via fallback on the next ⟳. Per-profile keys remain fully
+supported; they just all happen to be the same string now.
+
 ```
 profile=wear      health=200  sessions=200
 profile=research  health=200  sessions=401  "Invalid gateway API key (API_SERVER_KEY)"
