@@ -68,6 +68,11 @@ class DevAskReceiver : BroadcastReceiver() {
         if (intent?.hasExtra("gw_dump") == true) { WearApp.Graph.devGwDump(); return }
         if (intent?.hasExtra("gw_probe") == true) { WearApp.Graph.devGwProbe(); return }
         intent?.getStringExtra("gw_select")?.let { WearApp.Graph.devGwSelect(it); return }
+        // -e add_gw "label|https?://api|https?://watchkit" → upsert a gateway reusing the current
+        // token + agent-key map (deterministic multi-gateway demo shots, no GBoard wrestling).
+        intent?.getStringExtra("add_gw")?.let { spec ->
+            WearApp.Graph.devAddGateway(spec); return
+        }
         if (intent?.hasExtra("render_test") == true) { WearApp.Graph.devRenderTest(); return }
         if (intent?.hasExtra("img_test") == true) { WearApp.Graph.devImgTest(); return }
         if (intent?.hasExtra("body_status") == true) { WearApp.Graph.devBodyStatus(); return }

@@ -337,6 +337,24 @@ class WearApp : Application() {
             Log.i(TAG, "gw_select ok=$ok id=$id label='$label' err=$err")
         }
 
+        /** Dev-only (adb `-e add_gw "label|api|watchkit"`): upsert a gateway carrying the current
+         *  token + per-agent keys so a second endpoint is immediately usable (demo shots, §11). */
+        fun devAddGateway(spec: String) = scope.launch {
+            val bits = spec.split('|').map { it.trim() }
+            if (bits.size < 3) { Log.i(TAG, "add_gw BAD spec '$spec'"); return@launch }
+            val base = settings.gateways().firstOrNull()
+            val gw = dev.hermes.wearos.domain.Gateway(
+                id = bits[0].lowercase().replace(Regex("[^a-z0-9]"), ""),
+                label = bits[0],
+                apiEndpoints = listOf(bits[1]),
+                watchkitEndpoints = listOf(bits[2]),
+                token = settings.token(),
+                agentKeys = base?.agentKeys.orEmpty(),
+            )
+            settings.saveGateway(gw, select = false)
+            Log.i(TAG, "add_gw ok '${gw.label}' api=${bits[1]}")
+        }
+
         /** Dev-only (adb `-e gw_probe`): force the failover probe round; winner goes to logcat. */
         fun devGwProbe() {
             scope.launch {
