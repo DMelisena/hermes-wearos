@@ -345,6 +345,51 @@ class AppSettings(private val context: Context) {
     }
 
     /**
+     * PER-AGENT GATEWAY KEYS (SPEC §12.2): `profile -> API_SERVER_KEY`, mirrored from the selected
+     * gateway record (the record is the source of truth so the keys travel with the gateway they
+     * belong to — switch gateways, get that box's keys). StateFlow mirror because the Settings
+     * "Agent keys" list and the dial's 401 message both read it live.
+     */
+    private val _agentKeys = MutableStateFlow<Map<String, String>>(emptyMap())
+    val agentKeys: StateFlow<Map<String, String>> = _agentKeys
+    fun agentKeysSync(): Map<String, String> = _agentKeys.value
+
+    suspend fun loadAgentKeys() {
+        _agentKeys.value = selectedGateway()?.agentKeys.orEmpty()
+    }
+
+    /** The key to call [agent] with: its own key → the gateway token → the mirror token. */
+    suspend fun tokenFor(agent: String): String =
+        GatewayModel.tokenFor(selectedGateway(), agent, token())
+
+    /** Edit one agent's key by hand (Settings ▸ Gateways ▸ Agent keys); "" clears it. */
+    suspend fun setAgentKey(agent: String, key: String) {
+        val gw = selectedGateway() ?: return
+        val clean = key.trim()
+        val next = gw.agentKeys.toMutableMap().apply { if (clean.isEmpty()) remove(agent) else put(agent, clean) }
+        saveGateway(gw.copy(agentKeys = next), select = true)
+        _agentKeys.value = next
+    }
+
+    /**
+     * LEARN the keys instead of typing 64 hex chars on a watch (owner: "switching agents gives
+     * errors on some agents"). watchkit reads `~/.hermes/profiles/<p>/.env` on the gateway box, so
+     * any profile the operator already configured just WORKS the first time it is picked.
+     * Returns how many keys landed; failures are the caller's message, never an exception path
+     * that could break agent switching (the mirror keeps the previous keys either way).
+     */
+    suspend fun refreshAgentKeys(): Int {
+        val gw = selectedGateway() ?: return 0
+        val rows = Watchkit.agentKeys()
+        if (rows.isEmpty()) return 0
+        val next = gw.agentKeys.toMutableMap()
+        for (r in rows) if (r.key.isNotBlank()) next[r.profile] = r.key.trim()
+        saveGateway(gw.copy(agentKeys = next), select = true)
+        _agentKeys.value = next
+        return next.size
+    }
+
+    /**
      * W1-W4 body tool switches (Settings ▸ Body tools): tool name → enabled, all default OFF
      * (SPEC §5 "all OFF until switched"). StateFlow mirror for live Settings UI + pusher gate.
      */

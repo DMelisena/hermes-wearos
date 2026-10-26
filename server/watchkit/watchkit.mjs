@@ -197,6 +197,47 @@ async function handleCatalog(req, res, ip, params) {
   return done(res, send(res, 200, body), Date.now(), ip, 'catalog', 200, undefined, rows.length);
 }
 
+// ── agent keys (the multi-agent 401 fix, SPEC §12.2) ──────────────────────
+// A multiplexed Hermes gateway resolves API_SERVER_KEY PER PROFILE from the URL and fails CLOSED
+// for a named profile that has none: the wear token is a 401 on /p/research while /v1/health
+// (unauthenticated) keeps answering 200 — so the watch's Test button and endpoint failover both
+// look healthy for an agent that can do nothing. watchkit is the only component that can see the
+// truth, because it runs on the gateway box and reads the profile dotfiles:
+//   profiles/<p>/.env   → API_SERVER_KEY for <p>       (absent ⇒ that agent needs a key typed)
+//   ~/.env (or the home profile) → API_SERVER_KEY for `default`
+// Response (bearer-protected, tailnet/LAN-only port like every other route):
+//   {"agents":[{"profile":"wear","has_key":true,"key":"…"},{"profile":"research","has_key":false}],
+//    "source":{"default":"home-env"}}
+// Returning the KEYS is deliberate: this port is not public, the watch needs them to sign requests
+// per profile, and "switch agent, get a 401, type 64 hex chars on a watch" is not a workflow.
+// `has_key:false` is the honest answer the UI shows instead of a mystery error.
+function readEnvKey(file) {
+  try {
+    const txt = fs.readFileSync(file, 'utf8');
+    const m = /^API_SERVER_KEY=["']?([^"'\n]+)["']?$/m.exec(txt);
+    return m ? m[1].trim() : '';
+  } catch { return ''; }
+}
+
+function agentKeys() {
+  const out = [];
+  const homeKey = readEnvKey(path.join(os.homedir(), '.env'));
+  for (const profile of listAgents()) {
+    const key = profile === 'default'
+      ? (readEnvKey(path.join(PROFILES_DIR, 'default', '.env')) || homeKey)
+      : readEnvKey(path.join(PROFILES_DIR, profile, '.env'));
+    out.push({ profile, has_key: !!key, key });
+  }
+  return out;
+}
+
+async function handleAgentKeys(req, res, ip) {
+  const agents = agentKeys();
+  const withKey = agents.filter((a) => a.has_key).length;
+  const body = JSON.stringify({ agents, source: 'profiles-env' });
+  return done(res, send(res, 200, body), Date.now(), ip, 'agent_keys', 200, undefined, withKey);
+}
+
 const STATE_DIR = path.join(WK_DIR, '.state');
 const SNAPSHOT_PATH = path.join(STATE_DIR, 'snapshot.json');
 const SNAPSHOT_MAX_BYTES = 256 * 1024;
@@ -688,6 +729,8 @@ const server = http.createServer(async (req, res) => {
       return done(res, send(res, 200, JSON.stringify({ agents })), t0, ip, 'agents', 200, undefined, agents.length);
     }
     // Cross-profile sessions for the watch's Sessions screen (owner: continue computer chats).
+    // Per-profile gateway keys so the watch can sign requests for ANY agent (SPEC §12.2).
+    if (req.method === 'GET' && url === '/agent_keys') return await handleAgentKeys(req, res, ip);
     // Slash-command catalog for the watch's ⌘ overlay (SPEC §12.3). Bearer like every endpoint.
     if (req.method === 'GET' && url === '/catalog') {
       const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);

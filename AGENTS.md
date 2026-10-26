@@ -72,6 +72,15 @@ cp watchos.config.example.json watchos.config.json   # gitignored; the ONLY thin
 # watchkitEndpoints[] · token · watchkitToken? · watchSerial?
 ```
 
+**Multi-agent = per-profile keys (SPEC §12.2, this is the #1 gotcha):** a Hermes gateway multiplexes
+every profile on one port, but `API_SERVER_KEY` resolves **per profile** and fails *closed* for a
+named profile that has none — while `/v1/health` (unauthenticated) keeps answering 200, so the
+in-app Test and the failover probe look fine before every real call 401s. If the gateway is on this
+box, `scripts/setup.sh --agent-keys` reads every `profiles/<p>/.env` and pushes the whole map
+(`set_agent_key`); otherwise the watch learns it from watchkit `GET /agent_keys`, and Settings ▸
+Gateways ▸ Agent keys shows ✓/— per agent. Agents with no key are NOT broken forever — watchkit
+reads `state.db` key-free, so their sessions still list — but asks need a key.
+
 Every value is also a `setup.sh` flag (`--api`/`--token`/`--serial`… see `--help`). The app
 itself edits the same values at runtime: Settings ▸ Gateways (all in-app, nothing baked).
 
@@ -131,6 +140,7 @@ them via watchkit `/img`), CONFIRM-line approvals, and `bot-chat:wear` cron deli
 | device shows *offline* | Port rotated (§1 warning) → `adb disconnect` + `adb connect IP:NEW_PORT` |
 | Watch answers then goes silent between asks | Doze — `dumpsys deviceidle disable`, `svc power stayon true` (§1) |
 | 401 from gateway | Wrong profile token → `set_token` the **wear** profile's key (per-profile keys are a thing) |
+| One agent works, others 401 on every call (Test still says ✅) | That profile has no `API_SERVER_KEY` in its `.env` — `setup.sh --agent-keys`, or Settings ▸ Gateways ▸ Agent keys ▸ ⟳ learn (SPEC §12.2) |
 | 401 from watchkit but gateway fine | watchkit has its OWN bearer (`server/watchkit/config.json token`) — set `watchkitToken`/`set_watchkit` |
 | tailnet entry always fails at home | Expected while the watch is off-tailnet: failover lands LAN in ~2.5 s (SPEC §11.2) — that's working |
 | No mermaid/images/whisper | watchkit daemon down → `scripts/watchkit.sh start` (check `status`/`logs`) |

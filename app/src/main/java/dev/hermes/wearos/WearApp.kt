@@ -178,6 +178,7 @@ class WearApp : Application() {
                 scope.launch { settings.loadMarkdownRendering() } // Display ▸ markdown (F3 default ON)
                 scope.launch { settings.loadFontScale() } // pinch font-scale (Layout D epic)
                 scope.launch { settings.loadOrbSlots() } // the dial map (SPEC §12.1) — chat reads the mirror
+                scope.launch { settings.loadAgentKeys() } // per-agent gateway keys (SPEC §12.2)
                 scope.launch { settings.loadCommandUsage() } // slash-overlay recents (SPEC §12.3)
                 scope.launch { settings.loadSlashCatalog() } // pushed command catalog, if any
                 scope.launch { settings.loadBodyTools() } // W1-W4: body switches (all default OFF)

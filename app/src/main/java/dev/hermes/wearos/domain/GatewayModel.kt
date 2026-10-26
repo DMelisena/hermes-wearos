@@ -19,9 +19,26 @@ data class Gateway(
     val apiEndpoints: List<String>,
     val watchkitEndpoints: List<String>,
     val token: String = "",
+    /**
+     * PER-AGENT gateway keys, `profile -> API_SERVER_KEY` (SPEC §12.2). This exists because a
+     * multiplexed Hermes gateway resolves `API_SERVER_KEY` **per profile from the URL** and fails
+     * CLOSED for a named profile with no key: the wear token that works on `/p/wear` is a 401 on
+     * `/p/research`, while `/v1/health` (unauthenticated) keeps reporting 200 — so the in-app Test
+     * and the failover probe both look fine for a profile the watch can actually use for nothing.
+     * Learned automatically from watchkit `GET /agent_keys` (it reads `profiles/<p>/.env` on the
+     * gateway box), editable in Settings ▸ Gateways ▸ Agent keys.
+     *
+     * Adding a field to this record is rollback-safe: the JSON decodes with `ignoreUnknownKeys`,
+     * so an older watch reading a newer blob simply ignores it (and defaults here are empty).
+     */
+    val agentKeys: Map<String, String> = emptyMap(),
 ) {
     val primaryApi: String get() = apiEndpoints.firstOrNull().orEmpty()
     val primaryWatchkit: String get() = watchkitEndpoints.firstOrNull().orEmpty()
+
+    /** This agent's key on this gateway, falling back to the gateway token (SPEC §12.2 order). */
+    fun keyFor(agent: String): String =
+        agentKeys[agent]?.trim()?.takeIf { it.isNotEmpty() } ?: token.trim()
 }
 
 /**
@@ -127,6 +144,14 @@ object GatewayModel {
         val g = Gateway(id = hostId(ep), label = hostId(ep), apiEndpoints = apis, watchkitEndpoints = wks, token = token)
         return listOf(g) to g.id
     }
+
+    /**
+     * THE KEY RESOLVE ORDER (SPEC §12.2): the agent's own key → the selected gateway's token →
+     * the legacy mirror token. The last step keeps a single-gateway watch (or a pre-registry
+     * install) behaving exactly as it does today, so this can never make a working agent worse.
+     */
+    fun tokenFor(gateway: Gateway?, agent: String, mirrorToken: String): String =
+        gateway?.keyFor(agent)?.takeIf { it.isNotEmpty() } ?: mirrorToken.trim()
 
     /** Same host, watchkit port convention (:8651) — owner's layout on every gateway box. */
     fun derivedWatchkit(apiEndpoint: String): String {

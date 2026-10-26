@@ -213,4 +213,48 @@ class GatewayModelTest {
         assertEquals("", g.primaryWatchkit)
         assertFalse(GatewayModel.decode(GatewayModel.encode(listOf(GatewayModel.seed("t")))).isEmpty())
     }
+
+    // ── per-agent keys (SPEC §12.2: the multi-agent 401 fix) ────────────────
+
+    private fun gw(token: String, keys: Map<String, String> = emptyMap()) =
+        Gateway("g", "lab", listOf("http://h:8642"), listOf("http://h:8651"), token, keys)
+
+    @Test
+    fun `an agent's own key wins, the gateway token is the fallback`() {
+        val g = gw("GWKEY", mapOf("wear" to "WEARKEY", "research" to ""))
+        assertEquals("WEARKEY", g.keyFor("wear"))
+        // A blank stored value is treated as "no key", so the fallback can still work.
+        assertEquals("GWKEY", g.keyFor("research"))
+        assertEquals("GWKEY", g.keyFor("brand-new-agent"))
+    }
+
+    @Test
+    fun `the resolve order is agent key then gateway token then mirror token`() {
+        val g = gw("GWKEY", mapOf("wear" to "WEARKEY"))
+        assertEquals("WEARKEY", GatewayModel.tokenFor(g, "wear", "MIRROR"))
+        assertEquals("GWKEY", GatewayModel.tokenFor(g, "other", "MIRROR"))
+        assertEquals("MIRROR", GatewayModel.tokenFor(null, "wear", "MIRROR"))
+        // A gateway with no token of its own must not shadow a mirror that works (single-gateway
+        // installs keep behaving exactly as they do today).
+        assertEquals("MIRROR", GatewayModel.tokenFor(gw("", mapOf("x" to " ")), "wear", "MIRROR "))
+    }
+
+    @Test
+    fun `agent keys survive the registry round trip`() {
+        val list = listOf(gw("T", mapOf("wear" to "A", "elvtr" to "B")))
+        val back = GatewayModel.decode(GatewayModel.encode(list))
+        assertEquals(mapOf("wear" to "A", "elvtr" to "B"), back.single().agentKeys)
+    }
+
+    @Test
+    fun `an older watch's stored blob still decodes without agent keys`() {
+        // Rollback safety: the field is additive and `ignoreUnknownKeys` covers the other way.
+        val legacy = GatewayModel.encode(listOf(gw("T")))
+        assertEquals(emptyMap<String, String>(), GatewayModel.decode(legacy).single().agentKeys)
+        assertEquals(
+            "WEARKEY",
+            GatewayModel.decode(legacy.replace("\"token\":\"T\"", "\"token\":\"T\",\"agentKeys\":{\"wear\":\"WEARKEY\"}"))
+                .single().keyFor("wear"),
+        )
+    }
 }

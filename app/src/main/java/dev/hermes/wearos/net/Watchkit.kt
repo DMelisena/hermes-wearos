@@ -176,6 +176,28 @@ object Watchkit {
     }
 
     /**
+     * PER-AGENT GATEWAY KEYS (SPEC §12.2): `GET /agent_keys` — watchkit reads
+     * `~/.hermes/profiles/<p>/.env` on the gateway box, which is the only place the truth lives: a
+     * multiplexed gateway resolves `API_SERVER_KEY` per profile and fails CLOSED for a named
+     * profile with no key, while the unauthenticated `/v1/health` keeps answering 200. Learning
+     * the keys here is what makes "switch agent" work the first time instead of 401-ing until the
+     * owner types 64 hex characters on a watch.
+     */
+    suspend fun agentKeys(): List<AgentKey> = withContext(Dispatchers.IO) {
+        val cfg = _config.value
+        val req = Request.Builder()
+            .url("${cfg.baseUrl}/agent_keys")
+            .get()
+            .header("Authorization", "Bearer ${cfg.token}")
+            .build()
+        clientCall(req) { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw ApiException(r.code, "agent_keys ${r.code}: ${text.take(120)}")
+            AgentKeysResponse.parse(text).agents.filter { it.profile.isNotBlank() }
+        }
+    }
+
+    /**
      * THE COMMAND CATALOG (SPEC §12.3): `GET /catalog` on watchkit — the gateway's own slash-command
      * list plus the capability flags the 6:00 overlay dims by. watchkit is the only place that can
      * read `GET /v1/capabilities` and `GET /v1/skills` for EVERY profile with no profile key (it also
@@ -292,5 +314,18 @@ data class CatalogResponse(
         private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
         fun parse(text: String): CatalogResponse =
             json.decodeFromJsonElement(CatalogResponse.serializer(), json.parseToJsonElement(text))
+    }
+}
+
+/** One row of watchkit `GET /agent_keys`. `key` is empty exactly when `has_key` is false. */
+@kotlinx.serialization.Serializable
+data class AgentKey(val profile: String = "", val has_key: Boolean = false, val key: String = "")
+
+@kotlinx.serialization.Serializable
+data class AgentKeysResponse(val agents: List<AgentKey> = emptyList()) {
+    companion object {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
+        fun parse(text: String): AgentKeysResponse =
+            json.decodeFromJsonElement(AgentKeysResponse.serializer(), json.parseToJsonElement(text))
     }
 }

@@ -22,7 +22,8 @@ import kotlinx.coroutines.launch
  *  Gateway-epic additions: -e gw_dump, -e gw_probe, -e gw_select <id>.
  *  Dial-epic additions (SPEC §12-13): -e render [list|tables|wide|mermaid|pdf|link|media|all]
  *  (inject a canned answer that exercises the media surfaces — no gateway, no model),
- *  -e slash_catalog <json> (push the 6:00 overlay's command catalog + capability flags). */
+ *  -e slash_catalog <json> (push the 6:00 overlay's command catalog + capability flags),
+ *  -e set_agent_key <agent>=<key> / -e agent_keys (per-profile gateway keys, SPEC §12.2). */
 class DevAskReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         val token = intent?.getStringExtra("set_token")
@@ -33,6 +34,32 @@ class DevAskReceiver : BroadcastReceiver() {
         intent?.getStringExtra("set_base")?.let { WearApp.Graph.setBase(it); return }
         intent?.getStringExtra("set_watchkit_base")?.let { WearApp.Graph.setWatchkitBase(it); return }
         intent?.getStringExtra("set_watchkit")?.let { WearApp.Graph.setWatchkitToken(it); return }
+        // AGENT KEYS (SPEC §12.2): `-e set_agent_key wear=KEY` stores one agent's gateway key; a
+        // bare `-e agent_keys` makes the watch re-learn the whole map from watchkit (which reads
+        // profiles/<p>/.env on the gateway box). This is how a multi-agent setup gets configured
+        // without typing 64 hex chars on a watch keyboard.
+        intent?.getStringExtra("set_agent_key")?.let { spec ->
+            val agent = spec.substringBefore('=', "").trim()
+            val key = spec.substringAfter('=', "").trim()
+            if (agent.isEmpty() || key.isEmpty()) {
+                Log.w("HermesWear", "dev: set_agent_key wants agent=key (got '$spec')")
+                return
+            }
+            CoroutineScope(Dispatchers.Main).launch {
+                WearApp.Graph.settings.setAgentKey(agent, key)
+                Log.i("HermesWear", "dev: agent key stored for $agent (${key.length} chars)")
+                Toast.makeText(context, "key set: $agent", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+        if (intent?.hasExtra("agent_keys") == true) {
+            CoroutineScope(Dispatchers.Main).launch {
+                val n = try { WearApp.Graph.settings.refreshAgentKeys() } catch (e: Exception) { -1 }
+                Log.i("HermesWear", if (n >= 0) "dev: agent keys learned ($n known)" else "dev: agent_keys failed")
+                Toast.makeText(context, if (n >= 0) "agent keys: $n" else "agent keys: watchkit unreachable", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         if (intent?.hasExtra("gw_dump") == true) { WearApp.Graph.devGwDump(); return }
         if (intent?.hasExtra("gw_probe") == true) { WearApp.Graph.devGwProbe(); return }
         intent?.getStringExtra("gw_select")?.let { WearApp.Graph.devGwSelect(it); return }

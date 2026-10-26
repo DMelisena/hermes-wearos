@@ -7,6 +7,7 @@ import dev.hermes.wearos.data.AppSettings
 import dev.hermes.wearos.data.ChatMeta
 import dev.hermes.wearos.data.ChatStore
 import dev.hermes.wearos.net.GatewaySessions
+import dev.hermes.wearos.net.ApiException
 import dev.hermes.wearos.net.HermesApi
 import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.net.HermesApi.Companion.choiceNames
@@ -108,7 +109,30 @@ class ChatSession(
         _state.value = _state.value.copy(messages = messageLog.toList())
     }
 
-    private suspend fun api(): HermesApi = HermesApi(settings.baseUrl(), settings.token(), http)
+    /**
+     * The API handle for the ACTIVE agent, signed with THAT agent's key (SPEC §12.2). One Hermes
+     * box multiplexes every profile, but `API_SERVER_KEY` resolves per profile from the URL and
+     * fails CLOSED for a named profile that has none — so a single global token is exactly why
+     * "switching agents gives errors on some agents": the wear key is a valid 401 everywhere else.
+     * Resolution order lives in `GatewayModel.tokenFor` (agent key → gateway token → mirror).
+     */
+    private suspend fun api(): HermesApi = apiTo(settings.baseUrl())
+
+    /** Same signing for a FAILOVER endpoint (the base changes, the agent — and its key — do not). */
+    private suspend fun apiTo(baseUrl: String): HermesApi =
+        HermesApi(baseUrl, settings.tokenFor(settings.profileSync()), http)
+
+    /**
+     * Turn a raw failure into something a wrist can act on. The one that mattered (SPEC §12.2):
+     * a 401 on a multiplexed gateway usually means THIS agent has no `API_SERVER_KEY` on the box —
+     * `run submit 401: {"error":{…}}` told the owner nothing, so name the agent and say where to
+     * fix it. Everything else keeps its own message (no lying about real network failures).
+     */
+    private fun explain(e: Throwable): String {
+        val code = (e as? ApiException)?.code
+        if (code == 401) return "no key for ${settings.profileSync()} — Settings ▸ Gateways ▸ Agent keys"
+        return e.message ?: "network error"
+    }
 
     /**
      * Endpoint failover on request failure (SPEC §11): dethrone the endpoint [usedBaseUrl]
@@ -297,7 +321,7 @@ class ChatSession(
                     // retry a replay, never a double-run, whichever endpoint lands the request.
                     Log.w(TAG, "submit failed (${e.message}) — endpoint failover check")
                     val nextBase = advanceEndpoint(a.baseUrl)
-                    val retryApi = nextBase?.let { HermesApi(it, settings.token(), http) } ?: run { delay(1_500); a }
+                    val retryApi = nextBase?.let { apiTo(it) } ?: run { delay(1_500); a }
                     retryApi.submitRun(trimmed, session, idem)
                 }
                 store.update(activeId) { it.copy(lastRunId = accepted.runId, updatedAt = System.currentTimeMillis()) }
@@ -308,7 +332,7 @@ class ChatSession(
                 openEventStream(a, accepted.runId)
             } catch (e: Exception) {
                 Log.e(TAG, "ask failed", e)
-                finishWith("⚠️ ${e.message ?: "network error"}", error = true)
+                finishWith("⚠️ ${explain(e)}", error = true)
             }
         }
     }
@@ -561,6 +585,16 @@ class ChatSession(
                 createChat(null) // new agent gets its own chat with the <profile>-watch- prefix
             }
             Log.i(TAG, "agent switched -> $agent base=$newBase chat=$activeId prefix=${ProfileLogic.sessionPrefix(agent)}")
+            // THE SECOND HALF OF THE BUG (SPEC §12.2): the old per-profile 401 also STARVED the
+            // sessions refresh — the gateway fetch failed, the stale cache was served, and a
+            // brand-new agent showed the PREVIOUS agent's list. Learn this box's keys (watchkit
+            // reads profiles/<p>/.env) and refresh the list for the agent now selected, so the
+            // Sessions screen shows its own recents the moment the switch lands.
+            scope.launch {
+                val learned = runCatching { settings.refreshAgentKeys() }.getOrDefault(0)
+                Log.i(TAG, "agent keys refreshed for $agent ($learned known)")
+                refreshGatewaySessions()
+            }
             onDone(true, newBase, "")
         }
     }
@@ -668,6 +702,29 @@ class ChatSession(
             val (mine, error) = try {
                 GatewaySessions.parseProfiled(api().sessionsJson(), current) to ""
             } catch (e: Exception) {
+                // Key-less agent? watchkit reads that profile's state.db with no profile key at all
+                // (SPEC §12.2) — the difference between "show me this agent's recents" and a list
+                // that silently belongs to whoever had a working token.
+                val viaWatchkit = try {
+                    GatewaySessions.parseProfiled(Watchkit.fetchSessionsJson(current), current)
+                } catch (e3: Exception) {
+                    emptyList()
+                }
+                if (viaWatchkit.isNotEmpty()) {
+                    Log.i(TAG, "sessions for $current via watchkit (${viaWatchkit.size}) — gateway said: ${e.message}")
+                    return@launch run {
+                        val computer = try {
+                            GatewaySessions.parseProfiled(
+                                Watchkit.fetchSessionsJson(ProfileLogic.PROFILE_COMPUTER), ProfileLogic.PROFILE_COMPUTER,
+                            )
+                        } catch (e4: Exception) { emptyList() }
+                        val merged = GatewaySessions.merge(viaWatchkit + computer)
+                        _gatewaySessions.value = merged
+                        val ts = System.currentTimeMillis()
+                        _sessionsMeta.value = SessionsMeta(stale = false, fetchedAtMs = ts, error = "")
+                        settings.setSessionsCache(GatewaySessions.encode(merged), ts)
+                    }
+                }
                 // Offline/gateway down: serve the merged cache (already profile-tagged rows).
                 val (text, _) = settings.sessionsCache()
                 val cached = if (text.isNotEmpty()) try { GatewaySessions.parse(text) }

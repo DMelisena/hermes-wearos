@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.Button
@@ -83,6 +84,9 @@ fun SettingsScreen(
     var wkResult by remember { mutableStateOf("") }
     var wkTesting by remember { mutableStateOf(false) }
     var gwEditor by remember { mutableStateOf<GwDraft?>(null) }
+    // Agent-keys editor (SPEC §12.2): which agent's key is being typed, and the draft.
+    var keyEdit by remember { mutableStateOf<String?>(null) }
+    var keyDraft by remember { mutableStateOf("") }
     var gwNote by remember { mutableStateOf("") }
 
     val voiceOut by speak.enabled.collectAsState()
@@ -183,12 +187,16 @@ fun SettingsScreen(
                     if (api.isEmpty()) { gwNote = "⚠️ needs an API URL"; return@GatewayEditor }
                     val wk = listOf(d.wkA.ifBlank { GatewayModel.derivedWatchkit(api.first()) })
                         .map { it.trim() }.filter { it.isNotEmpty() }
+                    val gwId = d.id.ifEmpty { GatewayModel.hostId(api.first()) }
                     val gw = Gateway(
-                        id = d.id.ifEmpty { GatewayModel.hostId(api.first()) },
+                        id = gwId,
                         label = d.label.trim().ifEmpty { GatewayModel.hostId(api.first()) },
                         apiEndpoints = api.distinct(),
                         watchkitEndpoints = wk.distinct(),
                         token = d.token.trim(),
+                        // Editing URLs must never erase the per-profile keys learned from the box
+                        // (SPEC §12.2) — the editor does not show them, so carry them over.
+                        agentKeys = gateways.firstOrNull { it.id == gwId }?.agentKeys.orEmpty(),
                     )
                     WearApp.Graph.saveGateway(gw) { err ->
                         WearApp.Graph.runOnUi {
@@ -200,6 +208,103 @@ fun SettingsScreen(
                     }
                 },
                 onCancel = { gwEditor = null },
+            )
+        }
+
+        // ─── AGENT KEYS (SPEC §12.2; owner bug: "switching agents gives errors on some agents") ─
+        // One Hermes box multiplexes every agent, but `API_SERVER_KEY` resolves PER PROFILE and
+        // fails closed for a named profile without one — while the unauthenticated `/v1/health`
+        // keeps answering 200. So the Test button lies and every real call 401s. This section is
+        // the honest answer: show which agents actually have a key, LEARN them from watchkit (it
+        // reads profiles/<p>/.env on the gateway box), and allow pasting one by hand — typing 64
+        // hex chars with a watch keyboard is the fallback, not the workflow.
+        FieldLabel("Agent keys")
+        val agentKeys by settings.agentKeys.collectAsState()
+        val agentNames by WearApp.Graph.agents.agents.collectAsState()
+        val keyAgents = (agentNames + agentKeys.keys).distinct().sorted()
+        Text(
+            "one box · one key per agent · health 200 ≠ calls work",
+            style = MaterialTheme.typography.caption3,
+            fontSize = 10.sp,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.5f),
+        )
+        var keyNote by remember { mutableStateOf("") }
+        keyAgents.forEach { a ->
+            val has = agentKeys[a]?.isNotBlank() == true
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClickLabel = "key for $a") { keyEdit = a; keyDraft = agentKeys[a].orEmpty() }
+                    .padding(vertical = 3.dp, horizontal = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    a,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.caption1,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    if (has) "✓ key" else "— no key",
+                    style = MaterialTheme.typography.caption3,
+                    color = if (has) Color(0xFF81C784) else Color(0xFFE57373),
+                )
+            }
+        }
+        if (keyAgents.isEmpty()) {
+            Text(
+                "no agents seen yet — open the agent picker once (dial 10:30) and come back",
+                style = MaterialTheme.typography.caption3,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.5f),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "⟳ learn from watchkit",
+                style = MaterialTheme.typography.caption1,
+                color = MaterialTheme.colors.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(percent = 50))
+                    .background(MaterialTheme.colors.surface.copy(alpha = 0.4f))
+                    .clickable(onClickLabel = "learn agent keys") {
+                        scope.launch {
+                            keyNote = "…"
+                            keyNote = try {
+                                val n = settings.refreshAgentKeys()
+                                if (n > 0) "✓ $n keys learned" else "watchkit returned no keys"
+                            } catch (e: Exception) {
+                                "⚠️ ${e.message?.take(48) ?: e.javaClass.simpleName}"
+                            }
+                        }
+                    }
+                    .padding(horizontal = 9.dp, vertical = 4.dp),
+            )
+            if (keyNote.isNotEmpty()) {
+                Text(
+                    keyNote,
+                    style = MaterialTheme.typography.caption3,
+                    fontSize = 10.sp,
+                    color = if (keyNote.startsWith("⚠")) Color(0xFFE57373) else Color(0xFF81C784),
+                )
+            }
+        }
+        keyEdit?.let { agent ->
+            FieldLabel("key for $agent")
+            EditLine(
+                value = keyDraft,
+                onChange = { keyDraft = it },
+                placeholder = "paste ${agent}'s API_SERVER_KEY",
+                password = true,
+                onDone = {
+                    scope.launch {
+                        settings.setAgentKey(agent, keyDraft)
+                        keyNote = if (keyDraft.isBlank()) "cleared ${agent}" else "✓ saved for $agent"
+                        keyEdit = null
+                    }
+                },
             )
         }
 
