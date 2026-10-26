@@ -15,9 +15,10 @@ needs nothing but HTTP on your LAN or tailnet.*
 
 <p align="center">
   <a href="docs/demo/hermes-wear-vertical.mp4"><img src="docs/demo/hermes-wear-vertical.gif" width="200" alt="Animated preview: cold start, dictation, the approval card, and her self-portrait"/></a><br/>
-  <sub><a href="docs/demo/hermes-wear-vertical.mp4">▶ the 2-minute vertical tour (1080×1920, phone-shaped)</a> —
-  every feature at real wrist speed, captured live off a Galaxy Watch with no edits to the answers.
-  <a href="docs/demo/hermes-wear-demo.mp4">Widescreen cut here</a>.</sub>
+  <sub><a href="docs/demo/hermes-wear-vertical.mp4">▶ full 2-minute vertical tour (1080×1920)</a> — every
+  feature at real wrist speed, captured live off a Galaxy Watch with no edits to the answers.</sub><br/>
+  <sub>Splash art: <a href="docs/art-selfportrait.webp">her self-portrait</a> — engraved by the on-gateway
+  image agent from its own idea of itself; it flashes for a beat on cold start, then gets out of your way.</sub>
 </p>
 
 <br clear="all"/>
@@ -44,6 +45,10 @@ encrypted and bounded. It's the "own your stack" demo that lives on your wrist.
 | **Mermaid diagrams render** — architecture answers come back as pictures, via a gateway render helper (and cached). | **A real assistant** — your gateway's persona, tools, memory, and cron output; here, a debug conversation resumed from a desktop session. |
 | <img src="docs/screens/27-commands-overlay.png" width="180"/> | <img src="docs/screens/16-edit-resend.png" width="180"/> |
 | **Slash commands and skills** — flick the ⌘ lane at 6:00 for a searchable overlay of the gateway's command catalog and your usage-ranked recents; an unrecognized `/text` just goes to the agent as a prompt. | **Edit & resend** — hold any sent prompt to fork the session, edit it, and send again; the original thread survives the retry. |
+| <img src="docs/screens/21-session-search.png" width="180"/> | <img src="docs/screens/22-session-sheet.png" width="180"/> |
+| **Search every session, every agent** — one query hits the gateway's full-text index; results come back across all your agents with the matching line quoted and the hit bracketed. | **Long-press any session row** — ⑂ fork it into your agent and keep talking, 🗃 archive it off-canvas (undo one more long-press away), or 🗑 delete behind a real double-tap confirm. |
+| <img src="docs/screens/12-keyboard.png" width="180"/> | <img src="docs/screens/14-fontscale.png" width="180"/> |
+| **Or type it** — the keyboard lane opens the full system composer right on the watch; long prompts get room to breathe and a big `send`. | **Pinch to scale text** — transcript type grows or shrinks while images, charts, and cards keep their own size; double-tap resets to 1.0. |
 
 Plus: a GBoard prompt editor for long asks (with a big `Send`), pinch text scaling,
 TTS that speaks every reply by default (the orb's 1:30 drag mutes it), gateway notifications with approve
