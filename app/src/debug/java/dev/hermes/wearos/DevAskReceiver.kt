@@ -187,6 +187,14 @@ class DevAskReceiver : BroadcastReceiver() {
         if (intent?.hasExtra("dial_preview") == true) { WearApp.Graph.devDialPreview.value = true; return }
         // SEARCH AS A THUMB TYPES (`-e search haiku`) — adb input text can't traverse the Wear IME.
         intent?.getStringExtra("search")?.let { WearApp.Graph.devSearchQuery.value = it; return }
+        // CATCH UP THE OPEN CHAT (`-e catchup go`) — same door the pull-up gesture uses.
+        intent?.getStringExtra("catchup")?.let {
+            WearApp.Graph.session.catchUpActive(manual = true) { ok, n ->
+                Log.i("HermesWear", "dev: catchup ${if (ok) "ok +$n" else "FAILED"}")
+            }
+            Log.i("HermesWear", "dev: catchup queued")
+            return
+        }
         intent?.getStringExtra("open_chat")?.let { WearApp.Graph.session.openChat(it); return }
         if (intent?.hasExtra("chat_dump") == true) { WearApp.Graph.session.dumpChats(); return }
         if (intent?.hasExtra("stt_status") == true && context != null) {

@@ -1,6 +1,7 @@
 package dev.hermes.wearos.domain
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import dev.hermes.wearos.WearApp
 import dev.hermes.wearos.data.AppSettings
@@ -215,6 +216,10 @@ class ChatSession(
             store.setActive(id)
             enterChat(meta, store.loadTranscript(id))
             resumeRun()
+            // AUTO CATCH-UP (owner: *"it should pretty much do it on its own"*): entering a
+            // session-bound chat re-pulls whatever the desktop added since the last look.
+            // No-op for local-only chats and empty transcripts; silently skips mid-stream.
+            catchUpActive()
         }
     }
 
@@ -738,6 +743,10 @@ class ChatSession(
                     localTranscriptSize = if (existing.id == activeId) messageLog.size else localSize,
                     profileHint = sourceProfile,
                 )
+                // ...and CATCH UP the non-empty ones (owner's half-cut answer): tapping a session
+                // in the list always shows the gateway's latest tail, no manual pull needed.
+                // The empty case self-skips here (empty transcript guard) — no double-seed.
+                catchUpActive()
                 return@launch
             }
             if (activeId.isNotEmpty()) store.saveTranscript(activeId, messageLog)
@@ -746,6 +755,59 @@ class ChatSession(
             enterChat(meta, emptyList())
             Log.i(TAG, "gateway session adopted chat=${meta.id} session=$sessionId")
             backfillHistory(meta, localTranscriptSize = 0, profileHint = sourceProfile)
+        }
+    }
+
+    /**
+     * CHAT CATCH-UP (owner: *"somehow it should just sync… I shouldn't have to do the manual
+     * reload"* — and the pull-up gesture remains as the manual door). Re-pulls the ACTIVE chat's
+     * gateway session and appends the missing tail via [SessionHistory.catchUpPlan]. Rules: never
+     * while a run streams here (can't fight the token spigot); one flight at a time; per-chat
+     * cooldown so re-taps don't hammer the box; unanchored diffs refuse rather than duplicate;
+     * failures are silent in the log — the local transcript is never touched. Auto-called on
+     * every entry into a session-bound chat; [manual] adds the toast.
+     */
+    private var catchUpJob: Job? = null
+    private val catchUpAt = mutableMapOf<String, Long>()
+
+    fun catchUpActive(manual: Boolean = false, onDone: ((Boolean, Int) -> Unit)? = null) {
+        val chatId = activeId
+        if (chatId.isEmpty() || catchUpJob?.isActive == true) return
+        if (_state.value.busy) return // our own stream owns the transcript right now
+        val last = catchUpAt[chatId] ?: 0L
+        if (!manual && SystemClock.elapsedRealtime() - last < 5_000) return
+        catchUpAt[chatId] = SystemClock.elapsedRealtime()
+        catchUpJob = scope.launch {
+            store.loadIfNeeded()
+            val meta = store.get(chatId) ?: return@launch
+            val sessionId = meta.sessionTitle
+            if (sessionId.isBlank() || messageLog.isEmpty()) {
+                if (manual) onDone?.invoke(false, 0)
+                return@launch
+            }
+            val localSnapshot = messageLog.toList()
+            var appended = -1
+            for (p in SessionHistory.profileProbes(meta.profile)) {
+                val probe = scope.async(Dispatchers.IO) {
+                    SessionHistory.parse(Watchkit.fetchSessionMessagesJson(p, sessionId))
+                }
+                val msgs = try {
+                    withTimeoutOrNull(historyFetchTimeoutMs) { probe.await() }
+                } catch (e: Exception) { null }
+                probe.cancel()
+                if (msgs.isNullOrEmpty()) continue
+                val plan = SessionHistory.catchUpPlan(msgs, localSnapshot)
+                if (plan == null) { appended = 0; break }
+                val stamped = plan.map { ChatMessage(nextId(), it.role, it.text) }
+                messageLog = ArrayList(messageLog + stamped) // live sends during the fetch stay ahead of it
+                _state.value = _state.value.copy(messages = messageLog.toList())
+                store.saveTranscript(chatId, messageLog)
+                Log.i(TAG, "chat catch-up +${stamped.size} chat=$chatId session=$sessionId profile=$p")
+                appended = stamped.size
+                break
+            }
+            if (appended < 0) Log.i(TAG, "chat catch-up unavailable chat=$chatId")
+            if (manual) onDone?.invoke(appended >= 0, appended.coerceAtLeast(0))
         }
     }
 

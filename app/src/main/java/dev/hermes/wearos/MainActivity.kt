@@ -77,6 +77,7 @@ import dev.hermes.wearos.ui.SessionsScreen
 import dev.hermes.wearos.ui.SettingsScreen
 import dev.hermes.wearos.ui.VoiceHost
 import dev.hermes.wearos.ui.md.ZoomableMediaViewer
+import dev.hermes.wearos.domain.BackRing
 import dev.hermes.wearos.domain.BottomLayout
 import dev.hermes.wearos.domain.DialSpin
 import dev.hermes.wearos.domain.FontScale
@@ -457,6 +458,23 @@ class MainActivity : ComponentActivity() {
                             onApprove = { session.respondApproval(it) },
                             onOpenChats = { screen = Screen.Chats },
                             onOpenSessions = { screen = Screen.Sessions },
+                            // MANUAL DOOR (auto-sync is the primary path): keep dragging up at the
+                            // very bottom and the chat re-pulls its gateway session; toast reports.
+                            onPullUpAtBottom = {
+                                session.catchUpActive(manual = true) { ok, n ->
+                                    WearApp.Graph.runOnUi {
+                                        Toast.makeText(
+                                            context,
+                                            when {
+                                                !ok -> "⟳ catch-up failed — offline?"
+                                                n == 0 -> "⟳ up to date"
+                                                else -> "⟳ caught up · $n new"
+                                            },
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                }
+                            },
                             onOpenAgents = {
                                 showAgents = true
                                 uiScope.launch { agents.refresh() } // dialog shows cache instantly, refreshes live
@@ -598,18 +616,34 @@ class MainActivity : ComponentActivity() {
                 // screen BackHandlers below, so while an overlay is up this one is the enabled
                 // winner; with nothing open it disables and Sessions/Settings keep their
                 // → Chat handler, and Chat keeps the plain system default (leaving is the exit).
-                androidx.activity.compose.BackHandler(
-                    enabled = editor != null || promptSheet != null || manageSheet != null ||
-                        confirmDelete != null || showAgents || commandsOpen || devViewerScale != null,
-                ) {
+                val overlayOpen = editor != null || promptSheet != null || manageSheet != null ||
+                    confirmDelete != null || showAgents || commandsOpen || devViewerScale != null
+                androidx.activity.compose.BackHandler(enabled = overlayOpen) {
                     when {
                         editor != null -> editor = null
                         promptSheet != null -> promptSheet = null
                         confirmDelete != null -> confirmDelete = null
                         manageSheet != null -> manageSheet = null
-                        showAgents -> showAgents = false
+                        // Agents closes ONTO CHAT (back ring, batch 6): from the ring it is the
+                        // Agents→Chat leg; from a dial open it simply goes home to the chat.
+                        showAgents -> { showAgents = false; screen = Screen.Chat }
                         commandsOpen -> commandsOpen = false
                         devViewerScale != null -> WearApp.Graph.devViewerScale.value = null
+                    }
+                }
+                // THE RING (owner batch 6: *"chat to sessions to agents, then back to chat again —
+                // the app shouldn't really quit unless I hit the home button"*). With nothing open,
+                // physical back walks Chat → Sessions → Agents → Chat; the app never finishes from
+                // here (Chats/Settings rejoin at Chat). Composed last so it outranks the screens'
+                // own handlers; edge-swipe keeps its return-to-Chat meaning untouched.
+                androidx.activity.compose.BackHandler(enabled = !overlayOpen) {
+                    when (BackRing.action(screen)) {
+                        BackRing.Action.ToSessions -> screen = Screen.Sessions
+                        BackRing.Action.ToAgents -> {
+                            showAgents = true
+                            uiScope.launch { agents.refresh() }
+                        }
+                        BackRing.Action.ToChat -> screen = Screen.Chat
                     }
                 }
                 devViewerScale?.let { startScale ->
@@ -633,6 +667,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onPick = { name ->
                             showAgents = false
+                            screen = Screen.Chat // the ring's Agents→Chat leg, same on pick
                             if (name != profile) {
                                 session.switchAgent(name) { ok, _, err ->
                                     // REGRESSION (2a32c65 walkthrough): this callback fires from ChatSession's
@@ -649,7 +684,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
-                        onDismiss = { showAgents = false },
+                        onDismiss = { showAgents = false; screen = Screen.Chat },
                     )
                 }
                 promptSheet?.let { msg ->
@@ -754,10 +789,10 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Right edge-swipe exit (Chats/Sessions/Settings → Chat). Chat itself exits the app via swipe, as before. */
+/** Right edge-swipe exit (Chats/Sessions/Settings → Chat). The PHYSICAL back button follows the
+ *  ring (BackRing) instead — swipe is the "just get me back to the chat" gesture. */
 @Composable
 private fun ExitOnSwipeBack(onBack: () -> Unit, content: @Composable () -> Unit) {
-    androidx.activity.compose.BackHandler(enabled = true, onBack = onBack)
     SwipeToDismissBox(
         onDismissed = onBack,
         modifier = Modifier.fillMaxSize(),
@@ -794,6 +829,9 @@ private fun ChatBody(
     onApprove: (String) -> Unit,
     onOpenChats: () -> Unit,
     onOpenSessions: () -> Unit,
+    /** Pull-up-at-the-bottom of the transcript — re-pull this chat's gateway session (manual door;
+     *  entry into the chat already auto-catches-up). */
+    onPullUpAtBottom: () -> Unit = {},
     onOpenAgents: () -> Unit,
     onKeyboard: () -> Unit,
     onEditPrompt: (dev.hermes.wearos.domain.ChatMessage) -> Unit,
@@ -929,6 +967,7 @@ private fun ChatBody(
                     onEditPrompt = onEditPrompt,
                     listState = chatListState,
                     contentPadBottomDp = if (hasViewport) barPadDp else null,
+                    onPullUpAtBottom = onPullUpAtBottom,
                 )
             }
         }

@@ -2,6 +2,7 @@ package dev.hermes.wearos.domain
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -99,5 +100,40 @@ class SessionHistoryTest {
     @Test fun `caption reads like the sessions chip — computer not default`() {
         assertEquals("history · 12 messages · from 💻 computer", SessionHistory.captionLine(12, "default"))
         assertEquals("history · 3 messages · from research", SessionHistory.captionLine(3, "research"))
+    }
+
+    // ── CATCH-UP PLAN (owner: half-cut desktop answer; "it should pretty much do it on its own") ──
+    private fun user(t: String) = ChatMessage(0L, ChatMessage.Role.User, t)
+    private fun hermes(t: String) = ChatMessage(0L, ChatMessage.Role.Hermes, t)
+    private fun sys(t: String) = ChatMessage(0L, ChatMessage.Role.System, t)
+
+    @Test fun `desktop appended — the plan is exactly the missing tail`() {
+        val local = listOf(user("q"), hermes("a1"))
+        val gateway = listOf(user("q"), hermes("a1"), user("again"), hermes("a2"))
+        assertEquals(listOf(user("again"), hermes("a2")), SessionHistory.catchUpPlan(gateway, local))
+    }
+
+    @Test fun `up to date and watch-ahead both mean nothing to do`() {
+        val same = listOf(user("q"), hermes("a"))
+        assertNull(SessionHistory.catchUpPlan(same, same))
+        assertNull(SessionHistory.catchUpPlan(same, same + hermes("watch kept talking")))
+    }
+
+    @Test fun `watch caption and fork notes never break alignment`() {
+        val local = listOf(
+            sys(SessionHistory.captionLine(2, "default")),
+            user("q"),
+            sys("— edited fork —"),
+            hermes("a1"),
+        )
+        val gateway = listOf(user("q"), hermes("a1"), hermes("late desktop answer"))
+        assertEquals(listOf(hermes("late desktop answer")), SessionHistory.catchUpPlan(gateway, local))
+    }
+
+    @Test fun `unanchored windows refuse and empty sides are backfills job not a double-seed`() {
+        // Slid windows / different chats: no common front → refuse rather than duplicate a wall.
+        assertNull(SessionHistory.catchUpPlan(listOf(user("x")), listOf(user("q"), hermes("a"))))
+        assertNull(SessionHistory.catchUpPlan(emptyList(), listOf(user("q"))))
+        assertNull(SessionHistory.catchUpPlan(listOf(user("q")), emptyList()))
     }
 }

@@ -3,6 +3,8 @@ package dev.hermes.wearos.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,6 +60,9 @@ fun ChatScreen(
     // leaves composition while listening) — walkthrough: "after stt talk button done, it scrolls
     // to the top of convo instead of staying at bottom".
     listState: ScalingLazyListState = rememberScalingLazyListState(),
+    // PULL-UP-AT-THE-END (owner: *"scroll to the bottom and keep dragging up → refresh that
+    // session from the gateway"*). The auto-sync does the everyday work; this is the manual door.
+    onPullUpAtBottom: () -> Unit = {},
 ) {
     // PINCH FONT-SCALE: every type change re-runs the bottom anchor (text height changes shift
     // the tail) — same scroll machinery, toast-free.
@@ -94,7 +101,30 @@ fun ChatScreen(
     }
     ScalingLazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().pointerInput(listState) {
+            // OBSERVER-ONLY gesture watch (Initial pass, consumes nothing → the list scrolls and
+            // the orb keeps its own lane). While the end is reached (no forward scroll left),
+            // upward travel accumulates; past the threshold the gateway re-pull fires — once
+            // per stroke.
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                var acc = 0f
+                var fired = false
+                while (true) {
+                    val ev = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = ev.changes.firstOrNull() ?: break
+                    if (!change.pressed) break
+                    val up = change.previousPosition.y - change.position.y
+                    if (up > 0f) {
+                        if (listState.canScrollForward) acc = 0f
+                        else if (!fired) {
+                            acc += up
+                            if (acc > 150f) { fired = true; onPullUpAtBottom() }
+                        }
+                    }
+                }
+            }
+        },
         // Round discipline (ask #5): first item rests below the clock, last above the orb bar,
         // horizontal gutter tops rows' own padding up to the safe circle; SLC scaling does falloff.
         // LAYOUT D: the chat passes the measured cluster top edge as the bottom clearance.
