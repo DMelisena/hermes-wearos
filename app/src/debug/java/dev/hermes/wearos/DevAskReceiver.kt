@@ -167,6 +167,8 @@ class DevAskReceiver : BroadcastReceiver() {
             Log.i("HermesWear", "dev: session_delete '$id' queued")
             return
         }
+        // DIAL PREVIEW: pins the ring open ~8 s for a screenshot (adb can't hold a drag mid-stroke).
+        if (intent?.hasExtra("dial_preview") == true) { WearApp.Graph.devDialPreview.value = true; return }
         intent?.getStringExtra("open_chat")?.let { WearApp.Graph.session.openChat(it); return }
         if (intent?.hasExtra("chat_dump") == true) { WearApp.Graph.session.dumpChats(); return }
         if (intent?.hasExtra("stt_status") == true && context != null) {

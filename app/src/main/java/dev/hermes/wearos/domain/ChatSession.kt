@@ -768,6 +768,9 @@ class ChatSession(
             }
             Log.i(TAG, "session forked ${info.id} -> $newId (${r.copied_messages} msgs)")
             resumeGatewaySession(newId, SessionManage.chatLabel(info.title), agent)
+            // The child must show up in the list the user comes BACK to — they jumped to the chat,
+            // but Sessions behind it was stale and the fresh fork looked like it never happened.
+            refreshGatewaySessions()
             onDone(true, "forked ${r.copied_messages} msgs")
         }
     }

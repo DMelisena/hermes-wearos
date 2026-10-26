@@ -981,6 +981,15 @@ private fun OrbCluster(
     val scale = OrbDial.scaleFor(minOf(viewportW, viewportH))
     var armed by remember { mutableStateOf(false) }
     var activeSlot by remember { mutableStateOf(-1) }
+    // `-e dial_preview`: pin the ring for screenshots (see WearApp.Graph.devDialPreview — why
+    // adb cannot catch a live drag). Auto-clears; nothing user-facing depends on it.
+    val dialPreview by WearApp.Graph.devDialPreview.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(dialPreview) {
+        if (dialPreview) {
+            kotlinx.coroutines.delay(8_000)
+            WearApp.Graph.devDialPreview.value = false
+        }
+    }
     var risen by remember { mutableStateOf(false) }
     val orbCy by androidx.compose.animation.core.animateFloatAsState(
         if (risen) OrbDial.risenCenterY(cluster.talk.cy, viewportH) else cluster.talk.cy,
@@ -995,7 +1004,7 @@ private fun OrbCluster(
         orbCyPx = orbCy,
         scale = scale,
         activeSlot = if (armed) activeSlot else -1,
-        visible = armed,
+        visible = armed || dialPreview,
         voiceOut = voiceOut,
     )
     TalkOrb(

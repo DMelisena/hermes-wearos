@@ -420,8 +420,28 @@ async function handleSessionFork(req, res, ip, body) {
     if (clash) return done(res, sendErr(res, 409, 'that session id already exists'), t0, ip, 'session_fork', 409);
     const sCols = dbCols(dst, 'sessions').filter((c) => c in orig);
     const title = (String(body.title || '').trim() || `${String(orig.title || orig.id).slice(0, 70)} (fork)`);
-    const overrides = { id: newId, title, parent_session_id: sessionId, archived: 0, auto_archived: 0, hidden: 0, pinned: 0, ended_at: null, end_reason: null };
-    const vals = sCols.map((c) => (c in overrides ? overrides[c] : orig[c]));
+    // CROSS-STORE lineages don't exist: `sessions.parent_session_id` has a real FK to
+    // sessions.id IN THE SAME STORE (verified the constraint firing on node:sqlite). A desktop
+    // chat forked into the watch agent's store gets parent NULL — provenance lives in the
+    // " (fork)" title and the watch's own log; pretending otherwise 503s the whole copy.
+    const sameStore = sessionDbPath(profile) === sessionDbPath(toProfile);
+    const overrides = {
+      id: newId, title, archived: 0, auto_archived: 0, hidden: 0, pinned: 0,
+      ended_at: null, end_reason: null, parent_session_id: sameStore ? sessionId : null,
+    };
+    // Every FK column must resolve INSIDE the target store (verified live: the agent stores have
+    // `sessions.system_prompt_hash -> system_prompts.hash`, which the `default` store doesn't even
+    // carry as a constraint — a copied hash is a ghost there and node:sqlite enforces FKs ON by
+    // DEFAULT). parent_session_id is covered by `overrides`; the prompt hash by the drop below.
+    const dropCols = new Set(['parent_session_id']);
+    for (const fk of dst.prepare('PRAGMA foreign_key_list(sessions)').all()) {
+      if (fk.table === 'system_prompts') dropCols.add(fk.from);
+    }
+    const vals = sCols.map((c) => {
+      if (c in overrides) return overrides[c];
+      if (!sameStore && dropCols.has(c)) return null;
+      return orig[c];
+    });
     dst.prepare(`INSERT INTO sessions (${sCols.map((c) => `"${c}"`).join(',')}) VALUES (${sCols.map(() => '?').join(',')})`)
       .run(...vals);
     // Messages: column intersection, fresh autoincrement ids, session re-pointed. The store's own

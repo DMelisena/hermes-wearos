@@ -100,6 +100,14 @@ class WearApp : Application() {
         val devViewerScale = MutableStateFlow<Float?>(null)
 
         /**
+         * Dev hook `-e dial_preview`: pins the DIAL RING open (armed, no finger) so a screenshot
+         * can show the 8 slots — `adb input swipe` injects one interpolated MOVE at stroke END,
+         * so an adb-driven drag never keeps the ring up long enough to capture (a real finger
+         * streams continuously). true = ring visible; the cluster auto-clears it after ~8 s.
+         */
+        val devDialPreview = MutableStateFlow(false)
+
+        /**
          * Dev hook (`-e open_editor "text"`): opens the prompt editor prefilled — the system
          * keyboard proof for owner batch 2 (works over adb on the physical watch, no tap needed).
          * MainActivity consumes (nulls it back after opening).
