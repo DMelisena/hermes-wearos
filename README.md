@@ -35,24 +35,63 @@ encrypted and bounded. It's the "own your stack" demo that lives on your wrist.
 
 | | |
 |---|---|
-| <img src="docs/screens/02-chat-markdown.png" width="180"/> | <img src="docs/screens/08-sessions.png" width="180"/> |
-| **Streaming markdown**, rendered for a round screen: headings, bold, bullets, numbered lists, tap-to-expand code chips, and real two-column tables (bold header, hairline, aligned cells) — wider tables degrade to readable rows, because a grid of pipes on 1.4 inches is a crime. Pinch to scale text (double-tap resets); media keeps its own zoom. | **Sessions, from your wrist** — browse and adopt desktop/server sessions (`💻`) with history backfilled; per-agent filters, one-tap new, and a **voice-or-type search** over every chat (server-side full-text; the snippet brackets the hit). **Long-press a session: ⑂ fork it into your agent and keep talking, 🗃 archive (undo on the wrist), or 🗑 delete behind a real double-check.** Opening a session re-pulls its gateway tail by itself — a desktop chat that kept talking shows the rest without a manual refresh, and the chat you left open catches up on app launch too. |
+| <img src="docs/screens/02-chat-markdown.png" width="180"/> | <img src="docs/screens/02b-chat-table.png" width="180"/> |
+| **Streaming markdown**, rendered for a round screen: headings, bold, italics, bullets, numbered lists, and tap-to-expand code chips — with math in real unicode (`E = mc²`, subscripts), because LaTeX doesn't render on 1.4 inches. Pinch to scale text (double-tap resets); media keeps its own zoom. | **Real tables from plain markdown** — bold header, hairline rule, aligned cells, no pipe vomit; wider tables degrade to readable rows instead of a grid you can't parse. |
+| <img src="docs/screens/08-sessions.png" width="180"/> | <img src="docs/screens/09-resumed.png" width="180"/> |
+| **Sessions, from your wrist** — browse and adopt desktop/server sessions (`💻`) with history backfilled; per-agent filters, one-tap new, and a **voice-or-type search** over every chat (server-side full-text; the snippet brackets the hit). Opening a session re-pulls its gateway tail by itself — a desktop chat that kept talking shows the rest without a manual refresh. | **A real assistant** — your gateway's persona, tools, memory, and cron output; here, a debug conversation resumed from a desktop session, history banner and all. |
 | <img src="docs/screens/03-image-card.png" width="180"/> | <img src="docs/screens/04-viewer-zoom.png" width="180"/> |
 | **Images at full resolution** — the agent draws, the watch decodes and shows it. Tap to open the viewer. | **Zoom viewer** — double-tap or pinch to zoom, drag to pan below fit, tap anywhere to close. |
 | <img src="docs/screens/06-ptt-overlay.png" width="180"/> | <img src="docs/screens/07-stop-running.png" width="180"/> |
 | **Tap-to-talk** — tap the orb and just talk; a pause sends it (on-device VAD). Tap again mid-speech to *cancel* the half-sentence, tap after a pause to send now. | **Kill mid-run** — the orb turns red while a run streams; press it and the *server-side* run cancels, not just the UI. |
-| <img src="docs/screens/05-mermaid.png" width="180"/> | <img src="docs/screens/09-resumed.png" width="180"/> |
-| **Mermaid diagrams render** — architecture answers come back as pictures, via a gateway render helper (and cached). | **A real assistant** — your gateway's persona, tools, memory, and cron output; here, a debug conversation resumed from a desktop session. |
-| <img src="docs/screens/27-commands-overlay.png" width="180"/> | <img src="docs/screens/16-edit-resend.png" width="180"/> |
-| **Slash commands and skills** — flick the ⌘ lane at 6:00 for a searchable overlay of the gateway's command catalog and your usage-ranked recents; an unrecognized `/text` just goes to the agent as a prompt. | **Edit & resend** — hold any sent prompt to fork the session, edit it, and send again; the original thread survives the retry. |
+| <img src="docs/screens/05-mermaid.png" width="180"/> | <img src="docs/screens/27-commands-overlay.png" width="180"/> |
+| **Mermaid diagrams render** — architecture answers come back as pictures, via a gateway render helper (and cached). | **Slash commands and skills** — flick the ⌘ lane at 6:00 for a searchable overlay of the gateway's command catalog and your usage-ranked recents; an unrecognized `/text` just goes to the agent as a prompt. |
 | <img src="docs/screens/21-session-search.png" width="180"/> | <img src="docs/screens/22-session-sheet.png" width="180"/> |
 | **Search every session, every agent** — one query hits the gateway's full-text index; results come back across all your agents with the matching line quoted and the hit bracketed. | **Long-press any session row** — ⑂ fork it into your agent and keep talking, 🗃 archive it off-canvas (undo one more long-press away), or 🗑 delete behind a real double-tap confirm. |
-| <img src="docs/screens/12-keyboard.png" width="180"/> | <img src="docs/screens/14-fontscale.png" width="180"/> |
-| **Or type it** — the keyboard lane opens the full system composer right on the watch; long prompts get room to breathe and a big `send`. | **Pinch to scale text** — transcript type grows or shrinks while images, charts, and cards keep their own size; double-tap resets to 1.0. |
+| <img src="docs/screens/16-edit-resend.png" width="180"/> | <img src="docs/screens/12-keyboard.png" width="180"/> |
+| **Edit & resend** — hold any sent prompt to fork the session, edit it, and send again; the original thread survives the retry. | **Or type it** — the keyboard lane opens the full system composer right on the watch; long prompts get room to breathe and a big `send`. |
+| <img src="docs/screens/14a-fontscale-min.png" width="180"/> | <img src="docs/screens/14b-fontscale-max.png" width="180"/> |
+| **Pinch to scale text — the full range, honestly captured.** At the minimum (×0.75) a dense six-row table fits with room to spare. | Same chat at the maximum (×1.6) — one glanceable row per line. Transcript type scales; images, charts, and cards keep their own size; double-tap resets to 1.0. |
 
 Plus: a GBoard prompt editor for long asks (with a big `Send`), pinch text scaling,
 TTS that speaks every reply by default (the orb's 1:30 drag mutes it), gateway notifications with approve
 buttons, and a diagnostics screen in Settings.
+
+## How the orb works
+
+The orb is the **only control** on the chat screen — every button that used to crowd the dial
+became a drag direction instead.
+
+<p align="center">
+  <img src="docs/demo/orb-dial.gif" width="210" alt="The orb dial on a real wrist: hold the disc, the ring appears with eight labeled lanes, drag to one, release — the lane under your finger fires"/>
+</p>
+
+- **Tap** — listen. The orb warms up and transcribes as you speak (on-device Vosk); a pause sends
+  it, a second tap mid-speech cancels the half-sentence.
+- **Tap while an answer streams** — stop the run. The orb burns red while the gateway is working;
+  one press cancels the *server-side* run, not just the UI.
+- **Press, hold, drag** — the dial. Hold the disc for a beat and a ring appears around it: eight
+  wedges, each with an icon and a label. Keep your finger down and slide around the ring — the lane
+  under your finger highlights — and **whatever lane you're on when you let go is the one that
+  fires.** The ring is up in under 100 ms and the icons sit outside the activation gate, so once
+  you've learned the map it's a blind flick.
+
+The eight directions, on the default map (clock-face — every one remappable, and `off` blanks a
+direction so an accidental drag does nothing):
+
+| Clock | Lane | Release does… |
+|---|---|---|
+| 12:00 | ⌨ **keyboard** | opens the text editor — type it, or use the keyboard's own mic |
+| 1:30 | 🔊 **mute** | toggles spoken replies (TTS is on by default) |
+| 3:00 | 🎙 **record** | hi-fi capture → your gateway's whisper STT *(voice-loop wiring is on the roadmap)* |
+| 4:30 | 📝 **notes** | voice-note ring — dictated notes straight into the chat *(same, in progress)* |
+| 6:00 | ⌘ **commands** | the searchable slash-command overlay (gateway catalog + your recents) |
+| 7:30 | 💬 **chats** | your chat list for the current agent |
+| 9:00 | ≡ **sessions** | the session browser — adopt desktop sessions, fork, archive, delete |
+| 10:30 | 👤 **agents** | the agent picker — persona, tools, session space, and gateway key swap together |
+
+Remap any direction at **Settings ▸ Display ▸ Orb dial** — tap a direction's row and it advances to
+the next action. The chat reads the change live: the very next flick obeys the new map, and the ring
+icons redraw with it. (The GIF above is the dial mid-flight: ring open, lanes lit, release-select.)
 
 ## Anatomy of a round trip
 
@@ -139,10 +178,10 @@ The watch itself does *not* need Tailscale today — it reaches the tailnet URL 
 when the watch sits on the tailnet (or a router that does). An embedded in-app tsnet node (watch joins
 the tailnet directly, no router help) is specced and deferred; see [SPEC §11.4](docs/SPEC.md).
 
-Inside a gateway, the endpoint editor shows the ordered list with live probe dots and the current
-auto-selected winner:
+Inside the gateway manager, every saved gateway is a row — here a tailnet entry and a LAN entry, with
+live probe dots, the current auto-selected winner marked, and the per-agent key matrix underneath:
 
-<img src="docs/screens/11-gateways.png" width="220" alt="Endpoint editor: tailnet primary and LAN fallback rows with probe dots"/>
+<img src="docs/screens/11-gateways.png" width="220" alt="Gateways manager: two gateway rows (tailnet and LAN) with probe dots and winner marker, agent keys with green checks below"/>
 
 ## Body tools (opt-in, owner-off by default)
 
@@ -169,7 +208,7 @@ Every knob is on-device, and there are no hidden ones:
 | | |
 |---|---|
 | <img src="docs/screens/17-agent-picker.png" width="180"/> | <img src="docs/screens/19-settings-display.png" width="180"/> |
-| **Agent switcher** — one tap switches persona, tools, session space, and base URL together. Each profile's gateway key is **learned automatically** (watchkit reads the profiles' `.env`s), and one shared `API_SERVER_KEY` across profiles = one login for the whole gateway. | **Display settings** — markdown toggle, text scale (`×1.00` + reset), and the pinch affordance documented in one line. |
+| **Agent switcher** — one tap switches persona, tools, session space, and base URL together. Each profile's gateway key is **learned automatically** (watchkit reads the profiles' `.env`s), and one shared `API_SERVER_KEY` across profiles = one login for the whole gateway. | **Display settings** — markdown toggle, text scale (`×1.00` + reset), and the orb dial's eight directions, each remappable by tapping its row. |
 | <img src="docs/screens/20-settings-connection.png" width="180"/> | <img src="docs/screens/13-launcher-icon.png" width="180"/> |
 | **Connection editor** — base URL + token (masked at rest, like a password field should be) with a live **Test** button; watchkit config lives right beside it. | **Nothing to install on the phone** — the whole assistant is one icon on the watch's app grid. |
 
@@ -249,7 +288,7 @@ mermaid as fence blocks (the watch renders them). Start the watchkit helper with
 
 ```bash
 source scripts/env.sh
-../devkit/gradle/current/bin/gradle :app:assembleDebug :app:testDebugUnitTest   # 175 tests
+../devkit/gradle/current/bin/gradle :app:assembleDebug :app:testDebugUnitTest   # 276 tests
 scripts/emulator.sh                        # optional headless Wear emulator
 scripts/doctor.sh                          # toolchain + link health report
 ```
