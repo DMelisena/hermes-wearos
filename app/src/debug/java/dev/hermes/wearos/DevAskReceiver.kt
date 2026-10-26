@@ -169,6 +169,8 @@ class DevAskReceiver : BroadcastReceiver() {
         }
         // DIAL PREVIEW: pins the ring open ~8 s for a screenshot (adb can't hold a drag mid-stroke).
         if (intent?.hasExtra("dial_preview") == true) { WearApp.Graph.devDialPreview.value = true; return }
+        // SEARCH AS A THUMB TYPES (`-e search haiku`) — adb input text can't traverse the Wear IME.
+        intent?.getStringExtra("search")?.let { WearApp.Graph.devSearchQuery.value = it; return }
         intent?.getStringExtra("open_chat")?.let { WearApp.Graph.session.openChat(it); return }
         if (intent?.hasExtra("chat_dump") == true) { WearApp.Graph.session.dumpChats(); return }
         if (intent?.hasExtra("stt_status") == true && context != null) {

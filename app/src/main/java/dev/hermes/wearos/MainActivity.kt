@@ -310,6 +310,16 @@ class MainActivity : ComponentActivity() {
                 // one search, not ten, and keeps typing from hammering watchkit.
                 var sessQuery by remember { mutableStateOf("") }
                 val searchHits by session.searchHits.collectAsState()
+                // `-e search <q>`: lands a typed query exactly where the thumb-types path does,
+                // opens Sessions, and clears itself so the box can be driven twice in one run.
+                val devSearch by WearApp.Graph.devSearchQuery.collectAsState()
+                androidx.compose.runtime.LaunchedEffect(devSearch) {
+                    devSearch?.let {
+                        screen = Screen.Sessions
+                        sessQuery = it
+                        WearApp.Graph.devSearchQuery.value = null
+                    }
+                }
                 LaunchedEffect(sessQuery) {
                     if (sessQuery.isBlank()) session.searchSessions("")
                     else {

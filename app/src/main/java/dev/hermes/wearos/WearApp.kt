@@ -107,6 +107,10 @@ class WearApp : Application() {
          */
         val devDialPreview = MutableStateFlow(false)
 
+        /** Dev hook `-e search <q>`: types a query into the Sessions search the way a thumb
+         *  would (adb `input text` can't traverse the Wear IME), then one-shot clears itself. */
+        val devSearchQuery = MutableStateFlow<String?>(null)
+
         /**
          * Dev hook (`-e open_editor "text"`): opens the prompt editor prefilled — the system
          * keyboard proof for owner batch 2 (works over adb on the physical watch, no tap needed).
