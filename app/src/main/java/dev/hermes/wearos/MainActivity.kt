@@ -298,6 +298,19 @@ class MainActivity : ComponentActivity() {
                     screen = Screen.Chat
                 }
 
+                // SESSION SEARCH (SPEC §12.4): debounced query → ChatSession.searchSessions; the
+                // 300 ms pause is what turns a dictated sentence (partials arrive per word) into
+                // one search, not ten, and keeps typing from hammering watchkit.
+                var sessQuery by remember { mutableStateOf("") }
+                val searchHits by session.searchHits.collectAsState()
+                LaunchedEffect(sessQuery) {
+                    if (sessQuery.isBlank()) session.searchSessions("")
+                    else {
+                        kotlinx.coroutines.delay(300)
+                        session.searchSessions(sessQuery)
+                    }
+                }
+
                 // Opening the sessions fast-path refreshes the gateway list (ask #2).
                 LaunchedEffect(screen) {
                     if (screen == Screen.Sessions) session.refreshGatewaySessions()
@@ -527,6 +540,13 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onRefresh = { session.refreshGatewaySessions() },
+                                query = sessQuery,
+                                onQueryChange = { sessQuery = it },
+                                hits = searchHits,
+                                voiceOn = listening.value && voiceSink.value != null,
+                                onVoiceStart = { startVoiceInto { t -> sessQuery = t } },
+                                onVoiceStop = { endListening() },
+                                onOpenLocal = { id -> session.openChat(id); screen = Screen.Chat },
                             )
                         }
                         Screen.Settings -> ExitOnSwipeBack(onBack = { screen = Screen.Chat }) {

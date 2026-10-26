@@ -238,6 +238,127 @@ async function handleAgentKeys(req, res, ip) {
   return done(res, send(res, 200, body), Date.now(), ip, 'agent_keys', 200, undefined, withKey);
 }
 
+// ── /search (session search over the profile's FTS index, SPEC §12.4) ───────
+// The owner's Sessions screen ask: "new session plus a tap-to-search box" — searchable across
+// every chat this agent ever had, not just the 20 rows /sessions lists. The store already carries
+// a maintained FTS5 index (`messages_fts`, triggers keep it in step with `messages`), so search is
+// a MATCH + join at ~ms on a 900 MB store — no scan, no new index, no gateway round trip.
+//   GET /search?profile=<p>&q=<words>&limit=8
+//   {"object":"list","profile":"wear","query":"orb dial","data":[
+//      {"id","title","last_active","message_count","profile","hits":3,"snippet":"…the orb dial
+//       wedges…","snippet_role":"user","title_match":true}]}
+// Snippet mechanics: FTS5 `snippet()` marks the hit with [brackets] — the watch shows that string
+// verbatim, which is how a wrist sees WHY a result matched. Words AND together, last word gets a
+// prefix star (`dial` → `dial*`) so typing mid-word already works; every token is quote-wrapped so
+// FTS operators inside the query can't throw syntax errors at us. Sessions the sidebar hides
+// (cron/tool/subagent noise, archived) are hidden here too — same visibility rules as /sessions,
+// one truth. If the profile has no store or FTS somehow isn't there, the answer is an empty list
+// (200), never a 500 the watch has to explain.
+const SEARCH_LIMIT_MAX = 12;
+
+function ftsQuery(q) {
+  // Words, FTS-safe: quote-wrap each token (internal quotes doubled), AND them, prefix the last.
+  const words = String(q || '').split(/\s+/).map((w) => w.replace(/"/g, '')).filter(Boolean).slice(0, 6);
+  if (!words.length) return '';
+  return words
+    .map((w, i) => `"${w}"${i === words.length - 1 ? '*' : ''}`)
+    .join(' AND ');
+}
+
+async function handleSearch(req, res, ip, params) {
+  const t0 = Date.now();
+  const profile = String(params.profile ?? 'default').trim() || 'default';
+  const q = String(params.q ?? '').trim().slice(0, 96);
+  const limit = Math.min(SEARCH_LIMIT_MAX, Math.max(1, Number(params.limit) || 8));
+  if (!SESSIONS_PROFILE_RE.test(profile))
+    return done(res, sendErr(res, 400, 'bad profile name'), t0, ip, 'search', 400);
+  const empty = JSON.stringify({ object: 'list', profile, query: q, data: [] });
+  const dbPath = sessionDbPath(profile);
+  if (!q || !dbPath || !fs.existsSync(dbPath))
+    return done(res, send(res, 200, empty), t0, ip, 'search', q ? 200 : 400, undefined, 0);
+  const match = ftsQuery(q);
+  let db;
+  try {
+    const { DatabaseSync } = await import('node:sqlite');
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    // Best-matching MESSAGES first (FTS rank), rolled up to sessions in JS: the wrist wants
+    // "which chat, and here is the line that matched" — one row per session, the single best
+    // snippet on it. LIKE over titles adds sessions whose NAME matches even when no message does.
+    const rows = db.prepare(`
+      SELECT s.id AS id, s.title AS title, s.message_count AS message_count,
+             COALESCE(s.last_activity_at, s.started_at) AS last_active,
+             m.role AS role,
+             snippet(messages_fts, 0, '[', ']', ' · ', 20) AS snippet,
+             rank AS rank
+      FROM messages_fts f
+      JOIN messages m ON m.id = f.rowid
+      JOIN sessions s ON s.id = m.session_id
+      WHERE messages_fts MATCH ?
+        AND s.hidden = 0 AND s.archived = 0
+        AND COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')
+        AND m.role IN ('user', 'assistant')
+      ORDER BY rank ASC
+      LIMIT 120
+    `).all(match);
+    const likeLike = `%${q.replace(/[%_]/g, '').slice(0, 48)}%`;
+    const titled = db.prepare(`
+      SELECT s.id AS id, 1 AS title_hit FROM sessions s
+      WHERE s.title LIKE ? AND s.hidden = 0 AND s.archived = 0
+        AND COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')
+      LIMIT 40
+    `).all(likeLike);
+    const titleHits = new Set(titled.map((r) => String(r.id)));
+    const bySession = new Map();
+    for (const r of rows) {
+      const id = String(r.id);
+      const hit = bySession.get(id);
+      if (hit) { hit.hits += 1; continue; } // first row per session = best rank = the snippet kept
+      bySession.set(id, {
+        id,
+        title: String(r.title ?? ''),
+        last_active: saneEpochSec(r.last_active),
+        message_count: Number(r.message_count) || 0,
+        profile,
+        hits: 1,
+        snippet: String(r.snippet ?? '').slice(0, 240),
+        snippet_role: String(r.role ?? ''),
+        title_match: titleHits.has(id),
+      });
+    }
+    // Title-named sessions with zero message hits still belong in the answer.
+    for (const id of titleHits) {
+      if (bySession.has(id)) continue;
+      const r = db.prepare(`
+        SELECT s.title AS title, s.message_count AS message_count,
+               COALESCE(s.last_activity_at, s.started_at) AS last_active
+        FROM sessions s WHERE s.id = ? LIMIT 1
+      `).get(id);
+      if (!r) continue;
+      bySession.set(id, {
+        id, title: String(r.title ?? ''), last_active: saneEpochSec(r.last_active),
+        message_count: Number(r.message_count) || 0, profile, hits: 0, snippet: '',
+        snippet_role: '', title_match: true,
+      });
+    }
+    // Rank: title match first (a chat NAMED what you typed beats a passing mention), then hit
+    // count, then recency. FTS rank order is already baked into which snippet we kept + insertion
+    // order for equal keys via the stable sort.
+    const data = [...bySession.values()]
+      .sort((a, b) =>
+        (b.title_match - a.title_match) ||
+        (b.hits - a.hits) ||
+        (b.last_active - a.last_active))
+      .slice(0, limit);
+    const body = JSON.stringify({ object: 'list', profile, query: q, data });
+    return done(res, send(res, 200, body), t0, ip, 'search', 200, undefined, data.length);
+  } catch (e) {
+    // No FTS table / busy store: empty beats error for a search box.
+    return done(res, send(res, 200, empty), t0, ip, 'search', 200, undefined, 0);
+  } finally {
+    try { db?.close(); } catch { /* already gone */ }
+  }
+}
+
 const STATE_DIR = path.join(WK_DIR, '.state');
 const SNAPSHOT_PATH = path.join(STATE_DIR, 'snapshot.json');
 const SNAPSHOT_MAX_BYTES = 256 * 1024;
@@ -729,6 +850,11 @@ const server = http.createServer(async (req, res) => {
       return done(res, send(res, 200, JSON.stringify({ agents })), t0, ip, 'agents', 200, undefined, agents.length);
     }
     // Cross-profile sessions for the watch's Sessions screen (owner: continue computer chats).
+    // Full-text session search for the watch's Sessions screen (SPEC §12.4).
+    if (req.method === 'GET' && url === '/search') {
+      const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
+      return await handleSearch(req, res, ip, q);
+    }
     // Per-profile gateway keys so the watch can sign requests for ANY agent (SPEC §12.2).
     if (req.method === 'GET' && url === '/agent_keys') return await handleAgentKeys(req, res, ip);
     // Slash-command catalog for the watch's ⌘ overlay (SPEC §12.3). Bearer like every endpoint.

@@ -696,6 +696,57 @@ class ChatSession(
      * Merged newest-first, capped to 30 (owner: "don't cache too many, gets out of hand"), NO
      * transcripts cached — tapping a foreign-profile row adopts it (agent swap + session resume).
      */
+    /**
+     * SESSION SEARCH (SPEC §12.4, owner: "a tap-to-search box, searchable via on-watch Vosk voice
+     * or keyboard"). One query answers in two passes: the watch's OWN chats land instantly (labels
+     * + saved transcripts, works with the gateway offline), then gateway full-text hits (watchkit
+     * FTS, this agent + the desktop profile) merge in under the rules in `SessionSearch.merge`.
+     * Every keystroke may call this — the previous search is simply cancelled.
+     */
+    private val _searchHits = MutableStateFlow<List<SessionHit>>(emptyList())
+    val searchHits: StateFlow<List<SessionHit>> = _searchHits
+    private var searchJob: Job? = null
+
+    fun searchSessions(query: String) {
+        val q = query.trim()
+        if (q.isEmpty()) {
+            searchJob?.cancel()
+            _searchHits.value = emptyList()
+            return
+        }
+        searchJob?.cancel()
+        searchJob = scope.launch {
+            val local = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                SessionSearch.localHits(chats.value, q) { store.loadTranscript(it) }
+            }
+            _searchHits.value = local // keystroke feedback while the box is still reachable
+            val agent = settings.profileSync()
+            val gateway = mutableListOf<SessionHit>()
+            for (p in listOf(agent, ProfileLogic.PROFILE_COMPUTER).distinct()) {
+                try {
+                    gateway += Watchkit.search(q, p).data.map { dto ->
+                        SessionHit(
+                            id = dto.id,
+                            title = dto.title.ifBlank { dto.id },
+                            profile = dto.profile.ifBlank { p },
+                            snippet = dto.snippet,
+                            source = SessionHit.Source.GATEWAY,
+                            lastActiveMs = dto.lastActiveMs(),
+                            hits = dto.hits,
+                            titleMatch = dto.title_match,
+                        )
+                    }
+                } catch (e: Exception) {
+                    // One profile's store being unreachable must not swallow the other's answer —
+                    // and the local hits already on screen stay exactly where they are.
+                    Log.i(TAG, "search '$q' profile=$p skipped (${e.message})")
+                }
+            }
+            _searchHits.value = SessionSearch.merge(local, gateway)
+            Log.i(TAG, "search '$q' -> ${_searchHits.value.size} hits (${local.size} local)")
+        }
+    }
+
     fun refreshGatewaySessions() {
         scope.launch {
             val current = settings.profileSync()

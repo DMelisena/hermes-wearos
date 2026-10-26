@@ -198,6 +198,28 @@ object Watchkit {
     }
 
     /**
+     * FULL-TEXT SESSION SEARCH (SPEC §12.4): watchkit `GET /search` runs the store's own FTS5
+     * index (`messages_fts`, trigger-maintained) — the Sessions box searches EVERY chat the agent
+     * ever had, not the 20 rows /sessions lists. Snippets arrive with the matched words in
+     * [brackets]; they are shown verbatim so a wrist sees WHY a row matched.
+     */
+    suspend fun search(query: String, profile: String): SearchResponse = withContext(Dispatchers.IO) {
+        val cfg = _config.value
+        val url = cfg.baseUrl.toHttpUrl().newBuilder()
+            .addPathSegment("search")
+            .addQueryParameter("q", query)
+            .addQueryParameter("profile", profile)
+            .addQueryParameter("limit", "8")
+            .build()
+        val req = Request.Builder().url(url).get().header("Authorization", "Bearer ${cfg.token}").build()
+        clientCall(req) { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw ApiException(r.code, "search ${r.code}: ${text.take(120)}")
+            SearchResponse.parse(text)
+        }
+    }
+
+    /**
      * THE COMMAND CATALOG (SPEC §12.3): `GET /catalog` on watchkit — the gateway's own slash-command
      * list plus the capability flags the 6:00 overlay dims by. watchkit is the only place that can
      * read `GET /v1/capabilities` and `GET /v1/skills` for EVERY profile with no profile key (it also
@@ -327,5 +349,32 @@ data class AgentKeysResponse(val agents: List<AgentKey> = emptyList()) {
         private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
         fun parse(text: String): AgentKeysResponse =
             json.decodeFromJsonElement(AgentKeysResponse.serializer(), json.parseToJsonElement(text))
+    }
+}
+
+/** One /search row (SPEC §12.4). `snippet` carries [bracketed] hits; `title_match` is server-side
+ *  because only the store knows whether the CHAT NAME matched. */
+@kotlinx.serialization.Serializable
+data class SearchHitDto(
+    val id: String = "",
+    val title: String = "",
+    val last_active: Long = 0L,
+    val message_count: Int = 0,
+    val profile: String = "",
+    val hits: Int = 0,
+    val snippet: String = "",
+    val snippet_role: String = "",
+    val title_match: Boolean = false,
+) {
+    /** Server sends epoch SECONDS (same convention as /sessions); watch maths in ms. */
+    fun lastActiveMs(): Long = last_active * 1000L
+}
+
+@kotlinx.serialization.Serializable
+data class SearchResponse(val query: String = "", val data: List<SearchHitDto> = emptyList()) {
+    companion object {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
+        fun parse(text: String): SearchResponse =
+            json.decodeFromJsonElement(SearchResponse.serializer(), json.parseToJsonElement(text))
     }
 }
