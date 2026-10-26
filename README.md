@@ -21,6 +21,10 @@ needs nothing but HTTP on your LAN or tailnet.*
   image agent from its own idea of itself; it flashes for a beat on cold start, then gets out of your way.</sub>
 </p>
 
+**▶ Now with sound** — the full tour (GitHub plays it right here):
+
+![Hermes Wear OS — full 2-minute vertical tour with audio](docs/demo/hermes-wear-vertical.mp4)
+
 <br clear="all"/>
 
 ## Why this exists
