@@ -1271,6 +1271,19 @@ internal fun devMediaTestCard(): ImageBitmap {
     return bmp.asImageBitmap()
 }
 
+// Splash-spirit machinery (see HermesScaffold): process-wide one-shot, clock off the main thread.
+private val SpiritClaimed = java.util.concurrent.atomic.AtomicBoolean(false)
+internal val spiritVisible = androidx.compose.runtime.mutableStateOf(false)
+private fun spiritBoom() {
+    if (!SpiritClaimed.getAndSet(true)) {
+        spiritVisible.value = true
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+            delay(450)
+            spiritVisible.value = false
+        }
+    }
+}
+
 @Composable
 private fun HermesScaffold(content: @Composable ColumnScope.() -> Unit) {
     // PINCH FONT-SCALE: the persisted transcript type multiplier is PUBLISHED here, once, over
@@ -1278,17 +1291,18 @@ private fun HermesScaffold(content: @Composable ColumnScope.() -> Unit) {
     val fontScale by WearApp.Graph.settings.fontScale.collectAsState()
     CompositionLocalProvider(LocalFontScale provides fontScale) {
         // SPLASH SPIRIT (owner 2026-10-26): her self-portrait — engraved by Comfy in the Hermes
-        // art style — flashes at launch, one quick "boom," then dissolves into the chat. The
-        // delay is the app's real warm-up window (config + session restore), not a fake gate;
-        // on a warm process it reads as an instant brand sting.
-        var spirit by remember { mutableStateOf(true) }
-        LaunchedEffect(Unit) {
-            delay(620)
-            spirit = false
-        }
+        // art style — flashes at launch, one quick "boom," then dissolves into the chat. The show
+        // is claimed ONCE per process (AtomicBoolean) and timed on a Default-dispatcher scope, so
+        // composition churn during warm-up can neither re-trigger nor strand it; the previous
+        // remember+LaunchedEffect version restarted its clock on every recomposition and the
+        // remember+LaunchedEffect version restarted its clock on every recomposition and the
+        // portrait hung on screen for seconds. The system splash (windowSplashScreenAnimatedIcon)
+        // already shows her face-circle while the process starts — this overlay owns the
+        // full-bleed flash and the hand-off to the chat, and nothing after that.
+        remember { spiritBoom() }
         val spiritA by animateFloatAsState(
-            if (spirit) 1f else 0f,
-            androidx.compose.animation.core.tween(200), label = "spirit",
+            if (spiritVisible.value) 1f else 0f,
+            androidx.compose.animation.core.tween(220), label = "spirit",
         )
         Box(Modifier.fillMaxSize()) {
             Scaffold(
