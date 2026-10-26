@@ -62,7 +62,7 @@ The Gemini complaint: every press = new chat, no history. Hermes Wear OS flips i
 | Gesture / screen | Behavior |
 |---|---|
 | Press & hold (default) | TALK on the **current `wear` session — context continues**; header shows `● wear · 12 min` vs `○ wear · new` |
-| Hold → drag-up quick actions | **Continue** · **New session** · **Last session** (one-tap jump back) · **Choose agent/session** |
+| Drag the orb any of 8 ways | The **orb dial** (§12 D1–D8): keyboard · mute · record-to-gateway · voice notes · slash commands · chats · sessions · agents. Replaces every satellite button — the orb is the only control on the chat screen |
 | "start new session" (voice or chip) | Fresh wear session; old lands in history instantly |
 | Chats tab → Agents | Every profile on the gateway (`wear`, `research`, `weather`, …) via the gateway |
 | Agent → Sessions | **Cross-profile** list: current agent + the DESKTOP (`default`) profile's sessions newest-first (cap 30), profile chips `all / <agents> / 💻 computer`, ⌚ on watch-made ids; **NEW SESSION pinned top**; tap any row → continue from the wrist (foreign-profile row also swaps the agent) |
@@ -102,6 +102,12 @@ Advanced (diag ring buffer + upload, poll interval, dev options).
 | F12 | Reliability: `Idempotency-Key` retries (server-side dedupe — never double-runs), timeouts, last-state resume |
 | F13 | Budgeted Keystore cache: active session pinned; others evicted after 7 days unseen; ~100 MB cap (media evicts first); agents/titles persist; full offline read incl. images; no offline send (v2) |
 | F14 | Instant local answers (`pc health`, `gateway health`) without waking the agent |
+| F15 | Slash-command overlay (dial lane) — command catalog + usage-ranked recents, voice-or-type filter, every entry mapped to a real action (§12.3) |
+| F16 | Edit & resend **forks** the session (`/api/sessions/{id}/fork`) and truncates the local transcript at the edited turn — desktop branching semantics, no gateway change (§12.5) |
+| F17 | Multi-agent switching that WORKS: per-agent `API_SERVER_KEY`s learned from the gateway box, sessions preloaded per agent through watchkit (§12.2 — the bug this branch exists for) |
+| F18 | Session search: title/id offline, message BODIES via watchkit's FTS5 read of `state.db` (`GET /search`), voice-or-type query (§12.4) |
+| F19 | Record → gateway STT lane (dial 3:00): watch records WAV, gateway transcribes; backend configurable (branch 2 — §13.4) |
+| F20 | Voice-note ring buffer (dial 4:30): last N on-device transcripts, long-press copy, tap-paste into the draft (branch 2 for the on-device-vs-gateway quality swipe — §13.4) |
 
 ### Body tools (all OFF until switched)
 W1 `watch_heart_rate` · W2 `watch_steps`/rings · W3 `watch_sleep` · W4 `watch_spo2` · W5 `watch_workout` ·
@@ -113,14 +119,20 @@ phone actions (`phone_*`) → future companion, toggle screen reserved.
 U1 onboarding/pairing (mDNS + 6-digit code) · U2 full in-app settings · U3 watch notifications with inline
 Approve/Deny + deep-link · U4 Ask tile + pending-approval complication · U5 proactive event queue (SSE
 while open; batched Doze-friendly poll while closed) · U6 crown scroll, swipe-back, true-black OLED,
-screen-on only while TALKing/speaking · U7 diagnostics ring buffer.
+screen-on only while TALKing/speaking · U7 diagnostics ring buffer · U8 **orb dial** — 8 drag directions,
+remappable, contextual rise for the crowded lower arc (§12.1; the only touch target on the chat screen) ·
+U9 voice-or-type field — one component, 🎙 Vosk partials or system IME, used by search + the command
+overlay (§12.4).
 
 ### Server side
 S1 Hermes API server on tailnet bind with token (DONE) · S2 `wear` profile + watch persona (DONE) ·
 S3 tailnet access (DONE via tailnet bind; `tailscale serve` hostname+TLS optional once enabled in admin
 console) · S4 mDNS beacon + LAN TLS (M3) · S5 pairing CLI (`6-digit code` → token handout) (M1/M3) ·
 S6 watchkit helper — mermaid render, image scaling, whisper fallback, snapshot cache + MCP, event queue
-(comes online as features need it; v1 talks to the API server directly).
+ (comes online as features need it; v1 talks to the API server directly) · S7 watchkit `GET /agent_keys` —
+ every profile's `API_SERVER_KEY` read from `profiles/<p>/.env`, so the watch LEARNS keys instead of
+ typing them (§12.2) · S8 watchkit `GET /search?profile=&q=` — FTS5 message-body search over `state.db`
+ (§12.4).
 
 ## 6. Reference repos → what's taken
 
@@ -250,7 +262,228 @@ libtailscale/VpnService (official, consent dialog, heavier on Wear). Either need
 today: none — this section IS the Phase B artifact.
 
 
+## 12. Orb dial, agent keys, session search (owner batch 3, 2026-10-26)
+
+Owner's frame: *"would it simplify the interface even more to get all but the orb button off the
+main screen?"* One control, eight directions, plus the two bugs that surfaced while using it
+(agent switch 401s, sessions never preloading) and session search. Verified on the owner's
+hardware this batch: **Galaxy Watch Ultra (SM-L705U), API 36 / Android 16, 480×480 @ 340dpi** —
+byte-identical to `BottomLayout.REF`, so dial geometry is unit-testable against real numbers.
+
+### 12.1 The dial (D1–D8) — `domain/OrbDial.kt` + `ui/OrbDialOverlay.kt`
+
+Eight 45° sectors, default map (every slot remappable in Settings ▸ Orb):
+
+| Clock | Lane | Action id | Why |
+|---|---|---|---|
+| 12:00 | keyboard | `keyboard` | the drag-up that already ships (`OrbGesture.DRAG_UP` becomes this sector — semantics unchanged) |
+| 1:30 | mute / unmute | `mute` | the mute satellite's job; same way again = the inverse |
+| 3:00 | record → gateway STT | `record_hi` | high-quality transcription path (F19) |
+| 4:30 | voice notes | `voice_notes` | last N on-device transcripts, copy/paste (F20) |
+| 6:00 | slash commands | `commands` | the overlay (F15) |
+| 7:30 | chats | `chats` | local chats for the active agent (the header chip's job) |
+| 9:00 | sessions | `sessions` | gateway/computer sessions |
+| 10:30 | agents | `agents` | agent switcher |
+
+**Geometry decision (owner, locked):** the orb sits 15 ref-px off the bottom edge, so down / 4:30 /
+7:30 have no room for a ring. The dial therefore uses **contextual rise**: dragging up, left, right
+or either upper diagonal never moves the orb; when the drag vector enters the LOWER arc the orb
+animates toward face center (~110 ms) so the crowded slots are reachable, and it settles back when
+the drag leaves. Ring icons are drawn **past the fingertip** (`ICON_RING_REF` > activation radius)
+— you are dragging *to* an icon you can see, not to an invisible angle.
+
+**Speed discipline:** the ring fades in ≤ 80 ms, sector changes cost one haptic tick, release
+commits. Once the direction is memorized the whole gesture is a blind flick — the icons are for
+learning, not for aiming. Sectors activate past `ACTIVATE_RADIUS_REF` (never a jitter) and the
+lane only arms on a drag that crosses before the long-press timeout, so **tap = hands-free and
+hold = PTT are untouched** (`OrbGesture` keeps the race, `OrbDial` classifies the direction).
+
+**Screen after the change:** the three satellites (agent / sessions / mute) are gone from
+`BottomLayout`+`OrbCluster`, the two header chips are gone; a single passive caption line (agent ·
+chat · status, no touch target) is all that stays. Mute state reads on the ring glyph + that caption.
+
+### 12.2 Why agent switching was broken (root cause, proven live)
+
+Only `wear` carries a profile-scoped `API_SERVER_KEY` on the owner's gateway; `comfyui` · `elvtr` ·
+`esp32` · `k-dense` · `merge` · `redridge-treasurer` · `research` · `weather` have **none**, and
+`default` has its own different key. `api_server.py::_expected_api_key()` resolves the key **per
+URL-selected profile** and `_check_auth()` **fails closed** for named profiles — so the wear token
+that works perfectly on `/p/wear` is a 401 everywhere else:
+
+```
+profile=wear      health=200  sessions=200
+profile=research  health=200  sessions=401  "Invalid gateway API key (API_SERVER_KEY)"
+profile=comfyui   health=200  sessions=401
+profile=default   health=200  sessions=401
+```
+
+**The trap:** `/v1/health` is unauthenticated, so the Settings ▸ Test probe and
+`EndpointResolver`'s 2.5 s failover probe BOTH pass for a profile the watch can actually use for
+nothing. That is why the failure looked like "some agents just don't work" instead of a clean
+auth error. `multiplex_profiles: true` is already set, so this is purely a key problem.
+
+Fix, three layers:
+
+1. **Per-agent keys in the registry** — `Gateway.agentKeys: Map<String,String>` (`GatewayModel`
+   decodes with `ignoreUnknownKeys = true`, so the new field is rollback-safe: an older build
+   reading the new JSON simply ignores it). `AppSettings.tokenFor(agent)` resolves
+   agentKey → gateway token → mirror token, and `ChatSession.api()` builds `HermesApi` with the
+   key for the ACTIVE agent.
+2. **Auto-learn, zero typing** — new watchkit `GET /agent_keys` reads
+   `~/.hermes/profiles/<p>/.env` (plus the home `.env` for `default`) and returns
+   `{agents:[{profile, has_key}]}` with the keys themselves, guarded by the existing watchkit
+   bearer on a tailnet-only port. The watch refreshes them with the agent list and caches them,
+   so switching agents works the first time on a machine that already has keys configured.
+3. **Fail loud, degrade kind** — a 401 on submit says `no key for <agent> — Settings ▸ Gateways ▸
+   Agent keys`, not `run submit 401: {…}`; `setup.sh --agent-keys` + the `set_agent_key` dev hook
+   push every locally-detected key for scripted installs; AGENTS.md §5 documents the trap.
+
+**Sessions preload (the second half of the bug):** the old 401 also starved the sessions screen —
+its gateway fetch failed and it served the stale cache, so a new agent showed the PREVIOUS agent's
+list. `switchAgent` now triggers `refreshGatewaySessions()` and that refresh reads the **current**
+agent's list through watchkit `/sessions?profile=<p>` (state.db, no profile key needed) in
+addition to the gateway route — so a fresh agent always shows its own recent sessions, key or no key.
+
+### 12.3 Slash commands (F15) — `domain/SlashCommands.kt`
+
+**The constraint that shapes this feature** (read `gateway/platforms/api_server_runs.py` before
+changing it): the Runs API does **not** dispatch slash commands. `_handle_runs` turns `input` into
+a user message for the model; command dispatch (`run_inbound.py` →
+`hermes_cli.commands.is_gateway_known_command`) lives in the platform inbound path (Telegram/Slack/
+CLI). So posting `/steer fix it` to `/v1/runs` today asks the MODEL a question that happens to
+start with a slash. The catalog therefore declares **how the watch honors each entry**:
+
+| kind | Behavior | Backing |
+|---|---|---|
+| `steer` | inject guidance into the run in flight | `POST /v1/runs/{id}/steer` (`run_steer: true`) |
+| `stop` | detach + settle + best-effort cancel | `POST /v1/runs/{id}/stop` |
+| `fork` | branch the session | `POST /api/sessions/{id}/fork` |
+| `model` | provider/model picker, persisted lock | `GET /api/model/options` + `POST /api/sessions/{id}/model` |
+| `skills` | live skill list | `GET /v1/skills` (500s on the owner's `wear` profile today — treated as empty, never fatal) |
+| `side` | `/btw` = fork-then-ask so the main session stays clean | `session_fork` + run in the fork |
+| `client` | watch-side (new chat, rename, open sessions…) | local |
+| `text` | genuinely a prompt (`/help`-ish, CLI-only ones) | `/v1/runs` — labeled as such in the UI |
+
+`domain/CommandUsage.kt` ranks the overlay by frequency + recency in DataStore (owner: *"I like to
+use the slash BTW and the slash steer a lot"* — that has to be learned, not hardcoded), with
+`/skills` entries seeded live. **Gateway ask (small, filed §13.5):** `GET /v1/commands` off
+`COMMAND_REGISTRY`, which is already gateway-importable — then the catalog self-updates instead of
+being curated by hand here.
+
+### 12.4 Session search (F18) — `ui/VoiceOrTypeField.kt` + watchkit `GET /search`
+
+Search shares one field component everywhere (Sessions top row next to ＋ new session, Chats, and
+the command overlay): tap → real focused field with 🎙 (Vosk partials land in the query) and ⌨
+(system IME, same ladder `PromptEditor` already fights) chips below it — the owner's
+"keyboard or talk populates" affordance. Titles/ids filter locally and offline; message BODIES come
+from watchkit `GET /search?profile=&q=`, which is a ~40-line query over the `messages_fts` FTS5
+index that already exists in `state.db` (**verified: `MATCH 'watch'` → ranked rows in 23 ms** on the
+owner's 942 MB store). Same `display_kind` noise filters as `/sessions` so cron/tool rows don't
+flood results.
+
+### 12.5 Edit & resend = fork-on-edit (F16)
+
+Desktop edit truncates the server history and re-runs. The watch cannot (no truncate route exists),
+so — owner's pick — editing **forks**: `POST /api/sessions/{id}/fork` into a fresh
+`<profile>-watch-<base36>` id (keeps the ⌚ watch marker + the profile prefix contract), the local
+transcript truncates at the edited turn so the screen looks exactly like a desktop branch, and the
+edited text is asked in the fork. Honest limit, stated in `PromptEdit` too: `fork` copies the
+**whole** history (no truncate-to-point), so the superseded turn still sits in the fork's context —
+true rewind needs the gateway `truncate` route (§13.5).
+
 ---
+
+## 13. Next steps — branch 2 (media + voice quality), scoped 2026-10-26
+
+Agreed split: dial + agent switching + search land first and get a wrist review; everything below
+is the next worktree. Every item here is already researched — the "verified" lines are from the
+owner's Watch Ultra and gateway box, not assumptions.
+
+### 13.1 Tables: 5 columns + tap-to-open viewer
+
+Inline grid today covers exactly 2 labelled columns (`MdBlock.Table.gridable`); wider tables fall
+back to `· col: cell` lines. Work: widen `gridable` to 2–5 columns with a width budget derived from
+the measured viewport (480 ref, `BottomLayout.scaleFor`), column weights from measured cell text,
+bold header + hairline kept; past 5 columns keep the readable-row degradation. New
+`ui/md/TableViewer.kt`: tap any table → full-screen, both axes scroll, pinch re-scales type — the
+same gesture lane as `ZoomableMediaViewer` (raw `awaitEachGesture`; wear-compose 1.4.1/foundation
+1.7.6 have no `TransformState`). Parser tests for 3/4/5-col + ragged fixtures.
+
+### 13.2 Mermaid: native on-device vector renderer (no PNG conversion)
+
+Owner's ask: stop receiving a converted bitmap, render **all** diagram types natively. The two
+facts that decide the design:
+
+- **This watch has NO WebView.** `pm list packages | grep webview` → empty and
+  `android.software.webview` is absent from `pm list features` (Samsung Internet is its own engine,
+  not a shared provider). "Just run mermaid.js on the watch" is impossible, and shipping a JS+DOM
+  runtime for one feature is not worth ~15 MB.
+- **mermaid's own layout engine is what makes all the diagram types work** (dagre/ELK under the
+  hood). Re-implementing it in Kotlin for sequence/state/class/gantt/journey/… is a research
+  project, not a feature.
+
+So the pipeline is **vector to the watch, rasterize on the watch**: `mmdc -o diagram.svg` (its CLI
+already emits png/svg/pdf — today `watchkit handleRender` hardcodes `.png` and a `.png` cache key,
+so this is a `format` parameter, not a new service) → watchkit returns `image/svg+xml` → the watch
+paints the SVG through a Compose-Canvas painter (or an Apache-2 SVG view lib) and rasterizes at
+whatever scale the pinch lands on, inside the existing `ZoomableMediaViewer`. Caps that keep the
+Watch Ultra safe: element-count + byte ceilings on the SVG, viewport-sized rasterization
+(`MemAvailable` measured ~412 MB), and the fence source always stays one tap away when a diagram
+type the painter can't draw shows up — the message text is never lost. This also finally gives
+mermaid the same full-res treatment images got in batch 2 (full bytes to the watch, scaling on the
+watch), and shrinks watchkit's mermaid endpoint to a cache + pass-through.
+
+### 13.3 PDFs + links
+
+- **PDF**: two verified doors on this watch — `android.graphics.pdf.PdfRenderer` is on-device at
+  API 36 (pages → Bitmap, zero dependencies), and `com.dertefter.wearfiles` registers a
+  `PdfViewerActivity` for `application/pdf`. Plan: a lightweight inline paged viewer (renderer +
+  page stepper + the existing sub-fit zoom) with **Download** to MediaStore and a handoff to
+  WearFiles for anything we'd rather not render locally.
+- **Links**: markdown links currently render as literal `[text](url)` — `WatchMarkdown.parseInline`
+  handles `*` and backticks but has no link case. Add the span + click lane, then the
+  `ACTION_VIEW` ladder: **Samsung Internet is installed and resolves `http://` VIEW intents**
+  (`resolve-activity` → `com.sec.android.app.sbrowser…LauncherActivity`), so tap-to-open is real;
+  no-resolver fallback copies the URL + says so, and a "open on my computer" option rides the
+  agent's browser tools. Long-press = choose.
+- **Test harness**: a dev hook (`-e render_md <case>`) that injects a canned answer containing a
+  5-column table, a mermaid fence, a PDF path, a link and an image — so all five surfaces are
+  provable over adb + `screencap` without asking the model five times.
+
+### 13.4 Voice quality: configurable backend + the history ring
+
+Branch 1 ships the record→gateway lane against the **existing** `watchkit POST /stt/whisper`.
+Branch 2 makes it configurable and adds the comparison the owner asked for:
+
+| backend | shape | note |
+|---|---|---|
+| `whisper` | faster-whisper in watchkit's folder-local venv | ships today; **cold-starts the python process per request (~2–4 s)** — warm-worker TODO is in the watchkit header |
+| `openai` | any OpenAI-compatible `/v1/audio/transcriptions` | this is how **Parakeet TDT 0.6B on the owner's 4070** arrives: a small CUDA runner (NeMo/ONNX) behind that URL. The gateway's own `audio_api` is `false` on this box, so we point at the runner, not at Hermes |
+| `cmd` | run a configured command with the WAV path | the escape hatch for whatever transcribes well locally, no HTTP server needed |
+
+**Handy specifically has no HTTP transcription endpoint** (its docs expose CLI toggles/signals +
+history only — verified on handy.computer/docs), so "route it to my Handy model" means reusing the
+MODEL via one of the backends above, not talking to Handy. Settings: backend, model, endpoint,
+token, test button. The 4:30 ring buffer then stores `{ts, vosk_text, gateway_text?, wav?}` for the
+last N (default 8, settings 0/5/10/20), long-press copies the whole note, tap pastes it into the
+draft, and **swipe left/right toggles that note between on-device and gateway text** — no automatic
+always-send-every-clip policy; the owner decides per note (auto-quality is a later policy on top).
+Mic discipline: `VoskStt` holds `AudioRecord` under a mutex, so the record lane takes that same
+mutex rather than opening a second capture.
+
+### 13.5 Asks for the Hermes gateway (not this repo)
+
+1. `GET /v1/commands` — expose `hermes_cli.commands.COMMAND_REGISTRY` (already gateway-importable,
+   prompt_toolkit-free) so the watch catalog self-updates.
+2. `POST /api/sessions/{id}/truncate {before:<message_id>}` — `SessionDB.replace_messages` already
+   exists (fork uses it); ~20 lines. Unlocks exact desktop edit-and-resend and retires the
+   fork-per-edit workaround in F16.
+3. Consider one `API_SERVER_KEY` per profile in the install docs — the fail-closed 401 with an
+   open `/v1/health` is a trap for every client, not just the watch (§12.2).
+
+
+---
+
 
 ## Appendix A — Landed slices (build log, newest first)
 
