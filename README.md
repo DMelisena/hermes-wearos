@@ -4,7 +4,7 @@
 Telegram in the middle. Press the orb, say a thing, and a real agent on your own box — with real tools,
 memory, cron jobs, and your files — answers on your wrist, out loud, before your hand leaves the glass.
 
-<img src="docs/screens/01-orb-cluster.png" width="220" alt="Hermes Wear OS main screen: Hermes orb flanked by agent and gateway buttons" align="right" hspace="24"/>
+<img src="docs/screens/01-orb-cluster.png" width="220" alt="Hermes Wear OS main screen: the orb is the only control — drag it eight ways for keyboard, mute, record, notes, commands, chats, sessions, agents" align="right" hspace="24"/>
 
 Everything heavy runs on your gateway. The watch streams text in, streams tokens back, renders the
 answer (markdown, code, tables, **mermaid**, full-res images), and speaks it with an on-device voice.
@@ -37,7 +37,7 @@ encrypted and bounded. It's the "own your stack" demo that lives on your wrist.
 | **Mermaid diagrams render** — architecture answers come back as pictures, via a gateway render helper (and cached). | **A real assistant** — your gateway's persona, tools, memory, and cron output; here, a debug conversation resumed from a desktop session. |
 
 Plus: a GBoard prompt editor for long asks (with a big `Send`), tap-any-old-message edit-and-resend,
-TTS that speaks every reply by default (mute satellite on the rim), gateway notifications with approve
+TTS that speaks every reply by default (the orb's 1:30 drag mutes it), gateway notifications with approve
 buttons, and a diagnostics screen in Settings.
 
 ## Anatomy of a round trip
@@ -94,7 +94,7 @@ There is no free, offline, *perfect* STT on a watch today. Here's the truth ladd
 | **GBoard typing → its mic** | Google's cloud | Best raw accuracy available on the watch — at the cost of Google hearing it. | your choice |
 
 TTS is the opposite story: Android's on-device TTS is default **on**, so replies come back *spoken*
-without touching a cloud voice. Mute is one satellite tap away.
+without touching a cloud voice. Mute is one dial flick (drag the orb toward 1:30) — since batch 3 the orb is the *only* control on the chat screen: eight drag directions stand in for every button, and the ⌘ lane at 6:00 opens the slash overlay.
 
 ## Networking: LAN at home, tailnet everywhere
 
