@@ -43,4 +43,16 @@ object Vad {
         if (nowMs - s.startedAtMs >= maxMs) return true // empty at the cap → caller sends nothing
         return s.words > 0 && s.lastWordAtMs > 0L && nowMs - s.lastWordAtMs >= silenceMs
     }
+
+    /**
+     * Mid-speech probe for the second tap (owner: *"the only reason you would want to stop earlier
+     * is if you hit the orb mid-speaking so you could cancel"*). True when words have landed and
+     * the last one is fresher than [speakingWindowMs] — the wearer is still talking, so a tap now
+     * means CANCEL, not send. Past the window (paused), a tap is just an impatient end → send.
+     */
+    fun speakingNow(s: State, nowMs: Long, speakingWindowMs: Long = SPEAKING_NOW_MS): Boolean =
+        s.words > 0 && s.lastWordAtMs > 0L && nowMs - s.lastWordAtMs < speakingWindowMs
+
+    /** Owner-facing window for "still talking": words land far closer than this. */
+    const val SPEAKING_NOW_MS = 900L
 }

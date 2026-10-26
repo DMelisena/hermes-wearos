@@ -193,8 +193,18 @@ class MainActivity : ComponentActivity() {
                 val sttJob = remember { mutableStateOf<Job?>(null) }
 
                 val voiceSink = remember { mutableStateOf<((String) -> Unit)?>(null) }
+                // THE ORB'S CANCEL FLAG (owner batch 6: *"hit the orb mid-speaking so you could
+                // cancel"*). A second tap while the wearer is still talking swallows the flushed
+                // Final instead of sending half a sentence.
+                val voiceCancel = remember { mutableStateOf(false) }
 
                 fun endListening() {
+                    WearApp.Graph.stt.stop()
+                    voiceSink.value = null
+                }
+
+                fun cancelListening() {
+                    voiceCancel.value = true
                     WearApp.Graph.stt.stop()
                     voiceSink.value = null
                 }
@@ -204,6 +214,7 @@ class MainActivity : ComponentActivity() {
                 val startListening = remember {
                     { hands: Boolean ->
                         partial.value = ""; sttStatus.value = ""; sttHistory.clear()
+                        voiceCancel.value = false
                         handsFree.value = hands
                         vad.value = Vad.start(System.currentTimeMillis())
                         listening.value = true
@@ -220,6 +231,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                     is VoskEvent.Final -> {
                                         partial.value = ""
+                                        if (voiceCancel.value) {
+                                            // Mid-speech orb tap: the flushed tail is DISCARDED —
+                                            // a half-spoken sentence is not what the wearer meant.
+                                            voiceCancel.value = false
+                                            return@collect
+                                        }
                                         if (ev.text.isBlank()) return@collect
                                         val sink = voiceSink.value
                                         if (sink != null) sink(ev.text) // a query, not a prompt
@@ -505,8 +522,14 @@ class MainActivity : ComponentActivity() {
                             },
                             onOrbTap = {
                                 when {
-                                    // Tap while listening = finalize & send (empty flush = cancel silently).
-                                    listening.value -> endListening()
+                                    // Tap while listening: mid-speech = CANCEL the whole capture
+                                    // (owner: *"hit the orb mid-speaking so you could cancel"*);
+                                    // after a pause = finalize & send (same as the VAD auto-stop).
+                                    listening.value -> {
+                                        if (voiceSink.value == null &&
+                                            Vad.speakingNow(vad.value, System.currentTimeMillis())
+                                        ) cancelListening() else endListening()
+                                    }
                                     // Tap while a reply streams = STOP (ask #3).
                                     state.busy -> session.stopActiveRun()
                                     // Compose box open: send (or close when empty).
@@ -520,14 +543,13 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onHoldStart = {
-                                // Hold-to-talk semantics only when NOT running (ask #3).
-                                if (!state.busy && !listening.value) {
-                                    draft = ""; composing = false; speak.stop()
-                                    if (micGranted.value) startListening(false)
-                                    else micPermission.launch(Manifest.permission.RECORD_AUDIO)
-                                }
+                                // HOLD BELONGS TO THE DIAL (owner batch 6: long-press-to-listen is
+                                // retired — it fought the hold+drag selector). A bare hold with no
+                                // drag now means nothing; the dial arms on drag, recording starts
+                                // on TAP. TalkOrb still reports hold so callers that want it (none
+                                // today) can react; the dial path is onDialArm/onDialMove/onDialEnd.
                             },
-                            onHoldEnd = { if (!state.busy) endListening() },
+                            onHoldEnd = { /* dial semantics only — nothing to flush on bare hold */ },
                             // PINCH FONT-SCALE: multiplicative 0.05-step apply (persisted). Same-value
                             // events are dropped — a pinch only hits DataStore when a step changes.
                             onFontScalePinch = { factor ->
@@ -1043,7 +1065,8 @@ private data class EditorReq(val text: String, val original: String, val hint: S
  * on the disc (SPEC §12.1), so this composable is the orb, its dial ring, and the contextual rise
  * that makes the crowded lower arc reachable:
  *
- *  - [TalkOrb] owns the raw pointer stream (tap = hands-free, hold = PTT, drag = vectors out).
+ *  - [TalkOrb] owns the raw pointer stream (tap = record / stop / cancel, drag = vectors out;
+ *    the bare hold is inert — long-press belongs to the dial, owner batch 6).
  *  - [OrbDial] decides which of the eight wedges a vector means, whether the release cancels, and
  *    whether the disc should rise; the ring icons live FARTHER out than the activation gate, so a
  *    learner always drags toward something visible (see ui/OrbDialOverlay).

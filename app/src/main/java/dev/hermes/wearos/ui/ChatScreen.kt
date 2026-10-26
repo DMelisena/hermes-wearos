@@ -142,7 +142,7 @@ fun ChatScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text("Ask Hermes", style = MaterialTheme.typography.title2, textAlign = TextAlign.Center)
-                    Text("press the mic below", style = MaterialTheme.typography.caption3,
+                    Text("tap the orb to talk", style = MaterialTheme.typography.caption3,
                         color = MaterialTheme.colors.onBackground.copy(alpha = 0.5f))
                 }
             }

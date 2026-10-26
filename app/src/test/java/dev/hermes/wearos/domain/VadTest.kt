@@ -54,4 +54,22 @@ class VadTest {
         assertTrue(Vad.shouldFinalize(s, t0 + 2_500 + Vad.SILENCE_MS + 1))
         assertEquals(3, s.words)
     }
+
+    // ── MID-SPEECH CANCEL (owner batch 6: "hit the orb mid-speaking so you could cancel") ──
+    @Test fun `mid-speech tap means cancel - a fresh word means still talking`() {
+        var s = Vad.start(t0)
+        s = Vad.onPartial(s, "remind me to", t0 + 1_000)
+        assertTrue(Vad.speakingNow(s, t0 + 1_400)) // 400 ms after the last word → mid-speech
+        assertTrue(Vad.speakingNow(s, t0 + 1_000 + Vad.SPEAKING_NOW_MS - 1))
+    }
+
+    @Test fun `after a pause the same tap is just impatient - send, do not cancel`() {
+        var s = Vad.start(t0)
+        s = Vad.onPartial(s, "remind me to review the logs", t0 + 1_000)
+        assertFalse(Vad.speakingNow(s, t0 + 1_000 + Vad.SPEAKING_NOW_MS + 100))
+    }
+
+    @Test fun `nothing heard yet is not mid-speech - tapping an empty capture cancels empty`() {
+        assertFalse(Vad.speakingNow(Vad.start(t0), t0 + 5_000))
+    }
 }
