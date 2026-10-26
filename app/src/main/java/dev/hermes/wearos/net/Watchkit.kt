@@ -423,7 +423,9 @@ data class AgentKeysResponse(val agents: List<AgentKey> = emptyList()) {
 data class SearchHitDto(
     val id: String = "",
     val title: String = "",
-    val last_active: Long = 0L,
+    // Gateway timestamps arrive as unix SECONDS with fractional digits (`1793034407.203…`); a
+    // Long field throws and the whole profile's search silently drops out — take it as Double.
+    val last_active: Double = 0.0,
     val message_count: Int = 0,
     val profile: String = "",
     val hits: Int = 0,
@@ -432,7 +434,7 @@ data class SearchHitDto(
     val title_match: Boolean = false,
 ) {
     /** Server sends epoch SECONDS (same convention as /sessions); watch maths in ms. */
-    fun lastActiveMs(): Long = last_active * 1000L
+    fun lastActiveMs(): Long = (last_active * 1000.0).toLong()
 }
 
 @kotlinx.serialization.Serializable

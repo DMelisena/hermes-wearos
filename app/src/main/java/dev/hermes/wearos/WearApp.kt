@@ -115,6 +115,11 @@ class WearApp : Application() {
          *  switch is what `-e open_chat` alone never did — the catch-up proof needs it visible). */
         val devOpenChat = MutableStateFlow<String?>(null)
 
+        /** Dev hook `-e screen <chat|chats|settings|sessions>`: jump the UI to a screen. The ⌘
+         *  overlay popup swallows injected touches (adb taps never focus its search field), so
+         *  demo drives need this to reach Settings/Chats deterministically. */
+        val devScreen = MutableStateFlow<String?>(null)
+
         /**
          * Dev hook (`-e open_editor "text"`): opens the prompt editor prefilled — the system
          * keyboard proof for owner batch 2 (works over adb on the physical watch, no tap needed).

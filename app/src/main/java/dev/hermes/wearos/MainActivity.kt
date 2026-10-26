@@ -354,6 +354,19 @@ class MainActivity : ComponentActivity() {
                         WearApp.Graph.devOpenChat.value = null
                     }
                 }
+                // `-e screen <chat|chats|settings|sessions>`: deterministic navigation for demos.
+                val devScr by WearApp.Graph.devScreen.collectAsState()
+                androidx.compose.runtime.LaunchedEffect(devScr) {
+                    devScr?.let {
+                        screen = when (it.lowercase()) {
+                            "chats" -> Screen.Chats
+                            "settings" -> Screen.Settings
+                            "sessions" -> Screen.Sessions
+                            else -> Screen.Chat
+                        }
+                        WearApp.Graph.devScreen.value = null
+                    }
+                }
                 LaunchedEffect(sessQuery) {
                     if (sessQuery.isBlank()) session.searchSessions("")
                     else {

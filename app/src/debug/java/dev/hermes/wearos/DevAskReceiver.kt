@@ -18,6 +18,8 @@ import kotlinx.coroutines.launch
  *  -e session_fork <id> / -e session_delete <id> (the Sessions long-press menu, see §12.4 follow-up),
  *  -e session_archive <id> / -e session_unarchive <id> (🗃 hide/restore, desktop semantics),
  *  -e search <q> (types into the Sessions search box — adb input text can't traverse the IME),
+ *  -e screen <chat|chats|settings|sessions> (jump the UI to a screen — the ⌘ popup ignores injected
+ *  touches, so this is how demo scripts reach Settings and the Chats list),
  *  -e ptt_demo <partial|off> (forces the PTT overlay for screenshots; NEVER -ez — see handler),
  *  -e fontscale <1.4|reset> (persist+apply pinch font-scale without fingers),
  *  -e viewer_demo [scale] (open the media viewer on a generated card — sub-fit zoom proof;
@@ -198,6 +200,7 @@ class DevAskReceiver : BroadcastReceiver() {
             return
         }
         intent?.getStringExtra("open_chat")?.let { WearApp.Graph.devOpenChat.value = it; return }
+        intent?.getStringExtra("screen")?.let { WearApp.Graph.devScreen.value = it; return }
         if (intent?.hasExtra("chat_dump") == true) { WearApp.Graph.session.dumpChats(); return }
         if (intent?.hasExtra("stt_status") == true && context != null) {
             val model = if (VoskStt.isModelPresent(context)) "present" else "missing"

@@ -176,4 +176,21 @@ class GatewaySessionsTest {
         val back = GatewaySessions.parse(GatewaySessions.encode(rows))
         assertEquals(rows.sortedByDescending { it.lastActiveMs }, back) // ms → sec → ms keeps whole ms
     }
+
+    // ── FRACTIONAL GATEWAY TIMESTAMPS (found live 2026-10-26: last_active 1793034407.2032979) ──
+    @Test fun `search rows carry fractional-second timestamps and must not drop the profile`() {
+        // A Long field threw here ("Failed to parse literal … as a long"), which made watchkit
+        // search report zero hits and the watch silently fell back to local-only.
+        val r = SearchResponse.parse(
+            """{"query":"aurora","data":[{"id":"run_e23","title":"Aurora forecast","last_active":1793034407.2032979,"message_count":12,"profile":"wear-demo","hits":2,"snippet":"the [aurora] guide","title_match":true}]}""",
+        )
+        assertEquals(1, r.data.size)
+        assertEquals(1793034407203L, r.data[0].lastActiveMs())
+        assertEquals("wear-demo", r.data[0].profile)
+    }
+
+    @Test fun `integer timestamps still parse in the search row shape`() {
+        val r = SearchResponse.parse("""{"data":[{"id":"a","last_active":1793034407}]}""")
+        assertEquals(1793034407000L, r.data[0].lastActiveMs())
+    }
 }
