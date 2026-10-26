@@ -353,7 +353,7 @@ class MainActivity : ComponentActivity() {
                             endListening()
                             editor = EditorReq(text = "/btw ", original = "", hint = "side thread — main chat stays clean")
                         }
-                        CommandKind.Fork -> { commandsOpen = false; session.ask("/fork") }
+                        CommandKind.Fork -> { commandsOpen = false; session.forkActive() }
                         CommandKind.Model -> { commandsOpen = false; session.ask("/model") }
                         CommandKind.Skill -> { commandsOpen = false; session.ask(e.invocation) }
                         CommandKind.Status -> { commandsOpen = false; session.ask("gateway health?") }
@@ -447,10 +447,18 @@ class MainActivity : ComponentActivity() {
                             editor = editor,
                             onEditorDismiss = { editor = null },
                             onEditorSend = { original, text ->
+                                val editId = editor?.editOf ?: 0L
                                 editor = null
                                 PromptEdit.rewrap(original, text)?.let {
                                     speak.stop()
-                                    session.ask(it) // NEW user turn, same session (see PromptEdit note)
+                                    when {
+                                        // An EDITED user turn replaces itself (SPEC §12.5), a fresh
+                                        // slash draft routes through the command catalog, and only
+                                        // then does plain text become a plain ask.
+                                        editId > 0L -> session.editAndResend(editId, it)
+                                        it.startsWith("/") -> submitMaybeSlash(it)
+                                        else -> session.ask(it)
+                                    }
                                 }
                             },
                             onOrbTap = {
@@ -603,7 +611,7 @@ class MainActivity : ComponentActivity() {
                         preview = msg.text,
                         onEdit = {
                             promptSheet = null
-                            editor = EditorReq(text = msg.text, original = msg.text, hint = "✎ edit & resend")
+                            editor = EditorReq(text = msg.text, original = msg.text, hint = "✎ edit & resend", editOf = msg.id)
                         },
                         onCopy = {
                             val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
@@ -885,7 +893,9 @@ private data class DialCommands(
 )
 
 /** Request to open the full-screen editor: prefill, the text it edits ("" = fresh prompt), hint. */
-private data class EditorReq(val text: String, val original: String, val hint: String)
+/** The compose/edit sheet. `editOf` = transcript message id when this is an EDITED user turn
+ *  (drives fork-on-edit, SPEC §12.5); 0 = a fresh prompt. */
+private data class EditorReq(val text: String, val original: String, val hint: String, val editOf: Long = 0L)
 
 /**
  * THE ORB, ALONE (owner batch 3: "get all but the orb button off of the main screen"). The

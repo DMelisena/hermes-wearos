@@ -496,6 +496,110 @@ class ChatSession(
         Log.i(TAG, "dev: injected ${text.length} chars of canned answer (chat=$activeId)")
     }
 
+    /**
+     * FORK ON EDIT (SPEC §12.5, owner: editing an old prompt should REDO it "like the desktop",
+     * not pile a second answer onto the pile). As far as this gateway allows, it does exactly
+     * that: the local transcript rolls back to just before the edited turn, the gateway session
+     * is FORKED and this chat re-points at the fork, then the edited text is asked fresh on the
+     * branch. What cannot be undone (measured, not guessed): the fork copies the FULL history —
+     * the child is `#2` with every message — because there is no truncate route (SPEC §13.5
+     * asks for one), so the superseded answer stays in the MODEL's context even though the wrist
+     * never sees it again. The system line says so; silence would be a lie. No run in flight /
+     * fork refused (offline, key-less agent) → degrade honestly to the old append behavior with
+     * a visible note, because "my edit vanished" is worse than "my edit appended".
+     */
+    fun editAndResend(messageId: Long, newText: String) {
+        val t = newText.trim()
+        if (t.isEmpty()) return
+        val idx = messageLog.indexOfFirst { it.id == messageId }
+        if (idx < 0 || messageLog[idx].role != ChatMessage.Role.User) { ask(t); return }
+        // A run answering the OLD version of this turn must stop before the rollback erases it.
+        eventSource?.cancel()
+        askJob?.cancel()
+        val kept = messageLog.subList(0, idx).toMutableList()
+        scope.launch {
+            val chat = store.get(activeId)
+            val old = chat?.sessionTitle.orEmpty()
+            val forked = if (old.isNotEmpty()) {
+                runCatching { api().forkSession(old) }
+                    .onFailure { Log.w(TAG, "edit-fork failed (${it.message}) → append fallback") }
+                    .getOrDefault("")
+            } else ""
+            if (forked.isNotEmpty() && activeId.isNotEmpty()) {
+                store.update(activeId) { it.copy(sessionTitle = forked, updatedAt = System.currentTimeMillis()) }
+            }
+            messageLog = kept
+            _state.value = _state.value.copy(
+                messages = kept.toList(), live = "", status = "", busy = false,
+                activeChatId = activeId,
+            )
+            if (activeId.isNotEmpty()) store.saveTranscript(activeId, kept)
+            addMessage(
+                ChatMessage.Role.System,
+                if (forked.isNotEmpty()) "— edited · branched (the superseded answer stays in context — no truncate yet) —"
+                else "— edited · fork unavailable, appended instead —",
+            )
+            Log.i(TAG, "edit-and-resend: kept=$idx fork=${forked.ifEmpty { "none" }}")
+            ask(t)
+        }
+    }
+
+    /**
+     * `/fork` (SPEC §12.3, honored=branch): branch the current chat's gateway session and keep
+     * typing HERE — the watch chat re-points at the child, the local transcript stays put (it IS
+     * the history you can see), and the parent remains untouched on the gateway.
+     */
+    fun forkActive() {
+        scope.launch {
+            val chat = store.get(activeId)
+            val old = chat?.sessionTitle.orEmpty()
+            if (old.isEmpty()) {
+                addMessage(ChatMessage.Role.System, "— /fork: this chat has no gateway session yet —")
+                return@launch
+            }
+            val forked = runCatching { api().forkSession(old) }.getOrDefault("")
+            if (forked.isEmpty()) {
+                addMessage(ChatMessage.Role.System, "— /fork failed (offline or no key) —")
+                return@launch
+            }
+            store.update(activeId) { it.copy(sessionTitle = forked, updatedAt = System.currentTimeMillis()) }
+            addMessage(ChatMessage.Role.System, "— branched → ${forked.take(18)} · parent untouched, history carried —")
+            Log.i(TAG, "forked chat=$activeId $old -> $forked")
+        }
+    }
+
+    /**
+     * `/btw <aside>` (SPEC §12.3, the owner's favourite): the side conversation gets its OWN
+     * watch chat on a forked session — this thread stays exactly as clean as it was, and dial
+     * 7:30 (chats) jumps between them. The fork carries full context, so the aside can reference
+     * the real chat; the parent session never sees the aside at all.
+     */
+    fun sideAsk(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        scope.launch {
+            store.loadIfNeeded()
+            val chat = store.get(activeId)
+            val old = chat?.sessionTitle.orEmpty()
+            val forked = if (old.isNotEmpty()) runCatching { api().forkSession(old) }.getOrDefault("") else ""
+            val draft = if (forked.isNotEmpty()) {
+                store.draftMetaWith(forked, "btw: ${t.take(24)}", settings.profileSync())
+            } else {
+                store.draftMeta("btw: ${t.take(24)}", settings.profileSync())
+            }
+            if (activeId.isNotEmpty()) store.saveTranscript(activeId, messageLog)
+            store.addActive(draft)
+            enterChat(draft, emptyList())
+            addMessage(
+                ChatMessage.Role.System,
+                if (forked.isNotEmpty()) "— side branch · this chat can see the parent's context; dial 7:30 to switch back —"
+                else "— /btw without a fork (offline or no session yet) —",
+            )
+            ask(t)
+            Log.i(TAG, "btw side branch chat=${draft.id} fork=${forked.ifEmpty { "none" }}")
+        }
+    }
+
     fun stopActiveRun() {
         if (!_state.value.busy) { Log.i(TAG, "stop ignored: no run in flight"); return }
         val runId = currentRunId

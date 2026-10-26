@@ -179,6 +179,26 @@ class HermesApi(
         }
     }
 
+    /**
+     * Fork a gateway session (`POST /api/sessions/{id}/fork`, capability `session_fork`) and
+     * return the NEW session id. Live probe facts this relies on: the copy is the FULL history
+     * (`up_to_message_id` is accepted and ignored — the truncate route does not exist yet,
+     * SPEC §13.5) and the gateway titles the child "<same title> #2". Fork-on-edit therefore
+     * says "branched" on the transcript instead of pretending the superseded turn vanished.
+     */
+    suspend fun forkSession(sessionId: String): String {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            client.newCall(request("$baseUrl/api/sessions/$sessionId/fork", "{}")).execute().use { r ->
+                val txt = r.body?.string().orEmpty()
+                if (!r.isSuccessful) throw ApiException(r.code, "session fork ${r.code}: ${txt.take(160)}")
+                val sessionObj = (parse(txt)["session"] as? kotlinx.serialization.json.JsonObject?)
+                    ?: throw ApiException(r.code, "session fork: no session in response")
+                (sessionObj["id"] as? JsonPrimitive?)?.content
+                    ?: throw ApiException(r.code, "session fork: no id")
+            }
+        }
+    }
+
     fun respondApproval(runId: String, choice: String, requestId: String?) {
         val reqId = if (requestId != null) ",\"request_id\":${esc(requestId)}" else ""
         val body = "{\"choice\":${esc(choice)}$reqId}"
