@@ -40,7 +40,7 @@ encrypted and bounded. It's the "own your stack" demo that lives on your wrist.
 | <img src="docs/screens/08-sessions.png" width="180"/> | <img src="docs/screens/09-resumed.png" width="180"/> |
 | **Sessions, from your wrist** — browse and adopt desktop/server sessions (`💻`) with history backfilled; per-agent filters, one-tap new, and a **voice-or-type search** over every chat (server-side full-text; the snippet brackets the hit). Opening a session re-pulls its gateway tail by itself — a desktop chat that kept talking shows the rest without a manual refresh. | **A real assistant** — your gateway's persona, tools, memory, and cron output; here, a debug conversation resumed from a desktop session, history banner and all. |
 | <img src="docs/screens/03-image-card.png" width="180"/> | <img src="docs/screens/04-viewer-zoom.png" width="180"/> |
-| **Images at full resolution** — the agent draws, the watch decodes and shows it. Tap to open the viewer. | **Zoom viewer** — double-tap or pinch to zoom, drag to pan below fit, tap anywhere to close. |
+| **Images at full resolution** — the agent draws, the watch decodes and shows it. Tap to open the viewer. | **Zoom viewer** — double-tap or pinch to zoom, drag to pan below fit; close with the ✕ chip or the back button. |
 | <img src="docs/screens/06-ptt-overlay.png" width="180"/> | <img src="docs/screens/07-stop-running.png" width="180"/> |
 | **Tap-to-talk** — tap the orb and just talk; a pause sends it (on-device VAD). Tap again mid-speech to *cancel* the half-sentence, tap after a pause to send now. | **Kill mid-run** — the orb turns red while a run streams; press it and the *server-side* run cancels, not just the UI. |
 | <img src="docs/screens/05-mermaid.png" width="180"/> | <img src="docs/screens/27-commands-overlay.png" width="180"/> |
@@ -92,6 +92,29 @@ direction so an accidental drag does nothing):
 Remap any direction at **Settings ▸ Display ▸ Orb dial** — tap a direction's row and it advances to
 the next action. The chat reads the change live: the very next flick obeys the new map, and the ring
 icons redraw with it. (The GIF above is the dial mid-flight: ring open, lanes lit, release-select.)
+
+## The back button never quits
+
+Physical **back** is a loop, not an exit (owner batch 6: *"chat to sessions to agents, then back to
+chat again — the app shouldn't really quit unless I hit the home button"*):
+
+- **Deep in something** — a sheet, the keyboard editor, the agent picker, the ⌘ overlay, an image
+  viewer — back closes exactly that one layer, topmost first, until you're back on a main screen.
+- **On a main screen** — back walks the ring: **Chat → Sessions → Agents → Chat**, forever. The app
+  never finishes from back.
+- **To leave** — press **home**. And the owner's daily-driver setup: assign **double-press home**
+  (Wear settings) to open Hermes — wrist up, two taps, and you're back in your last session mid-
+  thought, ready to ask. New session when you want one is two taps and a tap.
+
+## Notifications, while you're out
+
+Out of the app, the watch speaks fluent Wear OS: settled runs and approval requests arrive as
+**standard notifications** — the preview shows on your wrist like any message, and tapping it (the
+open-app action) **deep-links straight into the session that produced it**, not just the app.
+Approval notifications carry **Approve / Deny** buttons that answer the run without opening
+anything. And because they're ordinary notifications on ordinary channels, your **Do Not Disturb,
+mute, and per-app settings all apply** — the watch never shouts over a meeting you told it to
+respect.
 
 ## Anatomy of a round trip
 
