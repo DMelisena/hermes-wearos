@@ -1,7 +1,7 @@
 # Hermes Wear OS
 
 **Your Wear OS watch talks directly to your own AI gateway.** No phone companion, no cloud relay, no
-Telegram in the middle. Press the orb, say a thing, and a real agent on your own box — with real tools,
+Telegram in the middle. Tap the orb, say a thing, and a real agent on your own box — with real tools,
 memory, cron jobs, and your files — answers on your wrist, out loud, before your hand leaves the glass.
 
 <img src="docs/screens/01-orb-cluster.png" width="220" alt="Hermes Wear OS main screen: the orb is the only control — drag it eight ways for keyboard, mute, record, notes, commands, chats, sessions, agents" align="right" hspace="24"/>
@@ -15,7 +15,7 @@ needs nothing but HTTP on your LAN or tailnet.*
 
 <p align="center">
   <a href="docs/demo/hermes-wear-demo.mp4"><img src="docs/demo/hermes-wear-demo-loop.gif" width="300" alt="Animated preview: ask the orb, the eight-way dial, session catch-up"/></a><br/>
-  <sub><a href="docs/demo/hermes-wear-demo.mp4">▶ watch the 30-second demo (mp4)</a> — captured live off a Galaxy Watch, no edits to the answers.</sub>
+  <sub><a href="docs/demo/hermes-wear-demo.mp4">▶ watch the full 2-minute tour (mp4)</a> — every feature, at real wrist speed, captured live off a Galaxy Watch with no edits to the answers.</sub>
 </p>
 
 <br clear="all"/>
@@ -33,15 +33,17 @@ encrypted and bounded. It's the "own your stack" demo that lives on your wrist.
 | | |
 |---|---|
 | <img src="docs/screens/02-chat-markdown.png" width="180"/> | <img src="docs/screens/08-sessions.png" width="180"/> |
-| **Streaming markdown**, rendered for a round screen: headings, bold, bullets, numbered lists, tap-to-expand code chips, and real two-column tables (bold header, hairline, aligned cells) — wider tables degrade to readable rows, because a grid of pipes on 1.4 inches is a crime. Pinch to scale text (double-tap resets); media keeps its own zoom. | **Sessions, from your wrist** — browse and adopt desktop/server sessions (`💻`) with history backfilled; per-agent filters, one-tap new, and a **voice-or-type search** over every chat (server-side full-text; the snippet brackets the hit). **Long-press a session: ⑂ fork it into your agent and keep talking, 🗃 archive (undo on the wrist), or 🗑 delete behind a real double-check.** Opening a session re-pulls its gateway tail by itself — a desktop chat that kept talking shows the rest without a manual refresh. |
+| **Streaming markdown**, rendered for a round screen: headings, bold, bullets, numbered lists, tap-to-expand code chips, and real two-column tables (bold header, hairline, aligned cells) — wider tables degrade to readable rows, because a grid of pipes on 1.4 inches is a crime. Pinch to scale text (double-tap resets); media keeps its own zoom. | **Sessions, from your wrist** — browse and adopt desktop/server sessions (`💻`) with history backfilled; per-agent filters, one-tap new, and a **voice-or-type search** over every chat (server-side full-text; the snippet brackets the hit). **Long-press a session: ⑂ fork it into your agent and keep talking, 🗃 archive (undo on the wrist), or 🗑 delete behind a real double-check.** Opening a session re-pulls its gateway tail by itself — a desktop chat that kept talking shows the rest without a manual refresh, and the chat you left open catches up on app launch too. |
 | <img src="docs/screens/03-image-card.png" width="180"/> | <img src="docs/screens/04-viewer-zoom.png" width="180"/> |
 | **Images at full resolution** — the agent draws, the watch decodes and shows it. Tap to open the viewer. | **Zoom viewer** — double-tap or pinch to zoom, drag to pan below fit, tap anywhere to close. |
 | <img src="docs/screens/06-ptt-overlay.png" width="180"/> | <img src="docs/screens/07-stop-running.png" width="180"/> |
-| **Hold-to-talk** — long-press the orb for push-to-talk with live on-device partials. Tap it for hands-free VAD mode. | **Kill mid-run** — the orb turns red while a run streams; press it and the *server-side* run cancels, not just the UI. |
+| **Tap-to-talk** — tap the orb and just talk; a pause sends it (on-device VAD). Tap again mid-speech to *cancel* the half-sentence, tap after a pause to send now. | **Kill mid-run** — the orb turns red while a run streams; press it and the *server-side* run cancels, not just the UI. |
 | <img src="docs/screens/05-mermaid.png" width="180"/> | <img src="docs/screens/09-resumed.png" width="180"/> |
 | **Mermaid diagrams render** — architecture answers come back as pictures, via a gateway render helper (and cached). | **A real assistant** — your gateway's persona, tools, memory, and cron output; here, a debug conversation resumed from a desktop session. |
+| <img src="docs/screens/27-commands-overlay.png" width="180"/> | <img src="docs/screens/16-edit-resend.png" width="180"/> |
+| **Slash commands and skills** — flick the ⌘ lane at 6:00 for a searchable overlay of the gateway's command catalog and your usage-ranked recents; an unrecognized `/text` just goes to the agent as a prompt. | **Edit & resend** — hold any sent prompt to fork the session, edit it, and send again; the original thread survives the retry. |
 
-Plus: a GBoard prompt editor for long asks (with a big `Send`), tap-any-old-message edit-and-resend (it **forks the session first**, desktop-style — the original answer survives the retry),
+Plus: a GBoard prompt editor for long asks (with a big `Send`), pinch text scaling,
 TTS that speaks every reply by default (the orb's 1:30 drag mutes it), gateway notifications with approve
 buttons, and a diagnostics screen in Settings.
 
@@ -52,7 +54,7 @@ sequenceDiagram
     participant W as ⌚ Watch
     participant G as 🖥 Hermes gateway
     participant L as 🧠 Your LLM
-    You->>W: hold orb, speak
+    You->>W: tap orb, speak
     Note over W: Vosk STT runs fully on-device<br/>(streaming partials)
     W->>G: POST run (text + session)
     G->>L: prompt + tools + memory

@@ -61,7 +61,7 @@ The Gemini complaint: every press = new chat, no history. Hermes Wear OS flips i
 
 | Gesture / screen | Behavior |
 |---|---|
-| Press & hold (default) | TALK on the **current `wear` session — context continues**; header shows `● wear · 12 min` vs `○ wear · new` |
+| Tap the orb (default) | RECORD on the **current `wear` session — context continues**; hands-free VAD ends itself on a pause, a second tap mid-speech cancels; header shows `● wear · 12 min` vs `○ wear · new` |
 | Drag the orb any of 8 ways | The **orb dial** (§12 D1–D8): keyboard · mute · record-to-gateway · voice notes · slash commands · chats · sessions · agents. Replaces every satellite button — the orb is the only control on the chat screen |
 | "start new session" (voice or chip) | Fresh wear session; old lands in history instantly |
 | Chats tab → Agents | Every profile on the gateway (`wear`, `research`, `weather`, …) via the gateway |
@@ -296,8 +296,9 @@ the drag leaves. Ring icons are drawn **past the fingertip** (`ICON_RING_REF` > 
 **Speed discipline:** the ring fades in ≤ 80 ms, sector changes cost one haptic tick, release
 commits. Once the direction is memorized the whole gesture is a blind flick — the icons are for
 learning, not for aiming. Sectors activate past `ACTIVATE_RADIUS_REF` (never a jitter) and the
-lane only arms on a drag that crosses before the long-press timeout, so **tap = hands-free and
-hold = PTT are untouched** (`OrbGesture` keeps the race, `OrbDial` classifies the direction).
+lane only arms on a drag that crosses before the long-press timeout, so **tap = record is untouched**
+(owner batch 6 made the bare hold inert — hold-to-talk retired so the hold belongs to the dial;
+`OrbGesture` keeps the race, `OrbDial` classifies the direction).
 
 **Re-aim (owner batch 5: "if I go up I should still be able to move over to one of the others"):**
 arming the dial BEATS the hold timer outright. Once the gate is crossed the gesture belongs to the
@@ -642,7 +643,8 @@ mutex rather than opening a second capture.
   `gateway/platforms/api_server_runs.py`, `run_stop` capability); app stops client-side first
   (detach SSE+poll via stopped-run guard, settle partial, `— stopped —` marker) then best-effort
   server cancel — proven: `resp {status:"stopping"}` → run `cancelled`. Orb morphs red **STOP**
-  while streaming; hold semantics apply only when not running. **PTT overlay**: while listening the
+  while streaming; the bare hold starts nothing any more (owner batch 6 — hold belongs to the
+  dial, hold-to-talk retired). **PTT overlay**: while listening the
   transcript is REPLACED by a full-screen pulsing-mic view with the big live partial (STT text
   never starts above the fold anymore). **Round insets**: Wear Compose **1.4.1 has no `Scaffold`
   for insets and no `ROUND_SCAFFOLD_INSETS`** (checked the shipped AARs) — own `RoundScreen` math
@@ -650,9 +652,12 @@ mutex rather than opening a second capture.
   `windowInsetsPadding` + SLC `contentPadding` on every screen. Gotchas: window insets are NOT
   delivered inside `Dialog` windows (spell paddings out), soft-wrap `Text` in a wrap-content
   centered `Column` can render as nothing (`fillMaxWidth`), Middle-anchored SLC needs the header
-  ITEM itself to carry the top inset. **Tap = hands-free** (follow-up A): tap starts Vosk capture
-  that auto-finalizes — `Vad` watchdog (pure, tested): ≥1 word + 1.2 s of no-new-word partials →
-  flush & send, 20 s hard cap, re-tap = send-now, zero words = cancel; `keyboard` chip flips to
+  ITEM itself to carry the top inset. **Tap = hands-free** (follow-up A, owner batch 6): tap starts
+  Vosk capture that auto-finalizes — `Vad` watchdog (pure, tested): ≥1 word + 1.2 s of no-new-word
+  partials → flush & send, 20 s hard cap, zero words = cancel. **A second tap splits by `Vad.speakingNow`**
+  — words landed within 900 ms means the wearer is still talking, so the tap CANCELS the whole capture
+  (the flushed Final is swallowed, never half-sent); past the window it is just an impatient send-now.
+  `keyboard` chip flips to
   text input without leaving the listen feel. **Location tool** (follow-up B): Settings ▸ Body
   tools ▸ Location (default OFF); `LocationTool` = `LocationManager.getCurrentLocation(provider,…)`
   (API 30 overload — the Criteria+ProviderRequest one is 31), last-known first, 10 s cap, fail-soft
