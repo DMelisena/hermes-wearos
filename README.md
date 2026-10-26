@@ -13,6 +13,11 @@ The whole app is ~1 MB of Kotlin + a zero-dependency Node helper on the server s
 *Works with any [Hermes](https://github.com/borealBytes) gateway exposing its API server; the watch
 needs nothing but HTTP on your LAN or tailnet.*
 
+<p align="center">
+  <a href="docs/demo/hermes-wear-demo.mp4"><img src="docs/demo/hermes-wear-demo-loop.gif" width="300" alt="Animated preview: ask the orb, the eight-way dial, session catch-up"/></a><br/>
+  <sub><a href="docs/demo/hermes-wear-demo.mp4">▶ watch the 30-second demo (mp4)</a> — captured live off a Galaxy Watch, no edits to the answers.</sub>
+</p>
+
 <br clear="all"/>
 
 ## Why this exists
@@ -28,7 +33,7 @@ encrypted and bounded. It's the "own your stack" demo that lives on your wrist.
 | | |
 |---|---|
 | <img src="docs/screens/02-chat-markdown.png" width="180"/> | <img src="docs/screens/08-sessions.png" width="180"/> |
-| **Streaming markdown**, rendered for a round screen: headings, bold, bullets, numbered lists, tap-to-expand code chips, and real two-column tables (bold header, hairline, aligned cells) — wider tables degrade to readable rows, because a grid of pipes on 1.4 inches is a crime. Pinch to scale text (double-tap resets); media keeps its own zoom. | **Sessions, from your wrist** — browse and adopt desktop/server sessions (`💻`), with their history backfilled; filters, resume, one-tap new. |
+| **Streaming markdown**, rendered for a round screen: headings, bold, bullets, numbered lists, tap-to-expand code chips, and real two-column tables (bold header, hairline, aligned cells) — wider tables degrade to readable rows, because a grid of pipes on 1.4 inches is a crime. Pinch to scale text (double-tap resets); media keeps its own zoom. | **Sessions, from your wrist** — browse and adopt desktop/server sessions (`💻`) with history backfilled; per-agent filters, one-tap new, and a **voice-or-type search** over every chat (server-side full-text; the snippet brackets the hit). **Long-press a session: ⑂ fork it into your agent and keep talking, 🗃 archive (undo on the wrist), or 🗑 delete behind a real double-check.** Opening a session re-pulls its gateway tail by itself — a desktop chat that kept talking shows the rest without a manual refresh. |
 | <img src="docs/screens/03-image-card.png" width="180"/> | <img src="docs/screens/04-viewer-zoom.png" width="180"/> |
 | **Images at full resolution** — the agent draws, the watch decodes and shows it. Tap to open the viewer. | **Zoom viewer** — double-tap or pinch to zoom, drag to pan below fit, tap anywhere to close. |
 | <img src="docs/screens/06-ptt-overlay.png" width="180"/> | <img src="docs/screens/07-stop-running.png" width="180"/> |
@@ -36,7 +41,7 @@ encrypted and bounded. It's the "own your stack" demo that lives on your wrist.
 | <img src="docs/screens/05-mermaid.png" width="180"/> | <img src="docs/screens/09-resumed.png" width="180"/> |
 | **Mermaid diagrams render** — architecture answers come back as pictures, via a gateway render helper (and cached). | **A real assistant** — your gateway's persona, tools, memory, and cron output; here, a debug conversation resumed from a desktop session. |
 
-Plus: a GBoard prompt editor for long asks (with a big `Send`), tap-any-old-message edit-and-resend,
+Plus: a GBoard prompt editor for long asks (with a big `Send`), tap-any-old-message edit-and-resend (it **forks the session first**, desktop-style — the original answer survives the retry),
 TTS that speaks every reply by default (the orb's 1:30 drag mutes it), gateway notifications with approve
 buttons, and a diagnostics screen in Settings.
 
@@ -155,7 +160,7 @@ Every knob is on-device, and there are no hidden ones:
 | | |
 |---|---|
 | <img src="docs/screens/17-agent-picker.png" width="180"/> | <img src="docs/screens/19-settings-display.png" width="180"/> |
-| **Agent switcher** — the watch talks to whichever Hermes profile you pick (one tap switches persona, tools, session space, and base URL together). | **Display settings** — markdown toggle, text scale (`×1.00` + reset), and the pinch affordance documented in one line. |
+| **Agent switcher** — one tap switches persona, tools, session space, and base URL together. Each profile's gateway key is **learned automatically** (watchkit reads the profiles' `.env`s), and one shared `API_SERVER_KEY` across profiles = one login for the whole gateway. | **Display settings** — markdown toggle, text scale (`×1.00` + reset), and the pinch affordance documented in one line. |
 | <img src="docs/screens/20-settings-connection.png" width="180"/> | <img src="docs/screens/13-launcher-icon.png" width="180"/> |
 | **Connection editor** — base URL + token (masked at rest, like a password field should be) with a live **Test** button; watchkit config lives right beside it. | **Nothing to install on the phone** — the whole assistant is one icon on the watch's app grid. |
 
