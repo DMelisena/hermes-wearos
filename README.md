@@ -14,8 +14,10 @@ The whole app is ~1 MB of Kotlin + a zero-dependency Node helper on the server s
 needs nothing but HTTP on your LAN or tailnet.*
 
 <p align="center">
-  <a href="docs/demo/hermes-wear-demo.mp4"><img src="docs/demo/hermes-wear-demo-loop.gif" width="300" alt="Animated preview: ask the orb, the eight-way dial, session catch-up"/></a><br/>
-  <sub><a href="docs/demo/hermes-wear-demo.mp4">▶ watch the full 2-minute tour (mp4)</a> — every feature, at real wrist speed, captured live off a Galaxy Watch with no edits to the answers.</sub>
+  <a href="docs/demo/hermes-wear-vertical.mp4"><img src="docs/demo/hermes-wear-vertical.gif" width="200" alt="Animated preview: cold start, dictation, the approval card, and her self-portrait"/></a><br/>
+  <sub><a href="docs/demo/hermes-wear-vertical.mp4">▶ the 2-minute vertical tour (1080×1920, phone-shaped)</a> —
+  every feature at real wrist speed, captured live off a Galaxy Watch with no edits to the answers.
+  <a href="docs/demo/hermes-wear-demo.mp4">Widescreen cut here</a>.</sub>
 </p>
 
 <br clear="all"/>
