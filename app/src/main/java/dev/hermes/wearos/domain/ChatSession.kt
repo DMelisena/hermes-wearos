@@ -787,6 +787,7 @@ class ChatSession(
             }
             val localSnapshot = messageLog.toList()
             var appended = -1
+            var sawEmpty = false
             for (p in SessionHistory.profileProbes(meta.profile)) {
                 val probe = scope.async(Dispatchers.IO) {
                     SessionHistory.parse(Watchkit.fetchSessionMessagesJson(p, sessionId))
@@ -795,7 +796,8 @@ class ChatSession(
                     withTimeoutOrNull(historyFetchTimeoutMs) { probe.await() }
                 } catch (e: Exception) { null }
                 probe.cancel()
-                if (msgs.isNullOrEmpty()) continue
+                if (msgs == null) continue // this probe failed (network/503) — try the next profile
+                if (msgs.isEmpty()) { sawEmpty = true; continue } // store answered, session not there
                 val plan = SessionHistory.catchUpPlan(msgs, localSnapshot)
                 if (plan == null) { appended = 0; break }
                 val stamped = plan.map { ChatMessage(nextId(), it.role, it.text) }
@@ -806,7 +808,9 @@ class ChatSession(
                 appended = stamped.size
                 break
             }
+            if (appended < 0 && sawEmpty) appended = 0 // stores answered; session simply wasn't there — not an outage
             if (appended < 0) Log.i(TAG, "chat catch-up unavailable chat=$chatId")
+            else if (appended == 0) Log.i(TAG, "chat catch-up up to date chat=$chatId session=$sessionId")
             if (manual) onDone?.invoke(appended >= 0, appended.coerceAtLeast(0))
         }
     }
