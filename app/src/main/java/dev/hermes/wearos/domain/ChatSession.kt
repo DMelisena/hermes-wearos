@@ -182,6 +182,10 @@ class ChatSession(
                 enterChat(scoped, store.loadTranscript(scoped.id))
             }
             resumeRun()
+            // AUTO CATCH-UP ON RESTORE (owner: *"it should pretty much do it on its own"*): the
+            // chat the app reopens on launch re-pulls its gateway tail too. Guards inside skip
+            // it silently when streaming, unbound, cooled-down, or offline.
+            catchUpActive()
         }
     }
 

@@ -345,6 +345,15 @@ class MainActivity : ComponentActivity() {
                         WearApp.Graph.devSearchQuery.value = null
                     }
                 }
+                // `-e open_chat <id>`: open the chat AND show it (screen switch included).
+                val devOpen by WearApp.Graph.devOpenChat.collectAsState()
+                androidx.compose.runtime.LaunchedEffect(devOpen) {
+                    devOpen?.let {
+                        session.openChat(it)
+                        screen = Screen.Chat
+                        WearApp.Graph.devOpenChat.value = null
+                    }
+                }
                 LaunchedEffect(sessQuery) {
                     if (sessQuery.isBlank()) session.searchSessions("")
                     else {

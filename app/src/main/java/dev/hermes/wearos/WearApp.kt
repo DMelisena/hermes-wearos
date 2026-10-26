@@ -111,6 +111,10 @@ class WearApp : Application() {
          *  would (adb `input text` can't traverse the Wear IME), then one-shot clears itself. */
         val devSearchQuery = MutableStateFlow<String?>(null)
 
+        /** Dev hook `-e open_chat <id>`: opens that chat AND lands the UI on it (the screen
+         *  switch is what `-e open_chat` alone never did — the catch-up proof needs it visible). */
+        val devOpenChat = MutableStateFlow<String?>(null)
+
         /**
          * Dev hook (`-e open_editor "text"`): opens the prompt editor prefilled — the system
          * keyboard proof for owner batch 2 (works over adb on the physical watch, no tap needed).

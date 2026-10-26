@@ -195,7 +195,7 @@ class DevAskReceiver : BroadcastReceiver() {
             Log.i("HermesWear", "dev: catchup queued")
             return
         }
-        intent?.getStringExtra("open_chat")?.let { WearApp.Graph.session.openChat(it); return }
+        intent?.getStringExtra("open_chat")?.let { WearApp.Graph.devOpenChat.value = it; return }
         if (intent?.hasExtra("chat_dump") == true) { WearApp.Graph.session.dumpChats(); return }
         if (intent?.hasExtra("stt_status") == true && context != null) {
             val model = if (VoskStt.isModelPresent(context)) "present" else "missing"
