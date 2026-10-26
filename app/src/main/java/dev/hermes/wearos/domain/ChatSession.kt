@@ -363,16 +363,30 @@ class ChatSession(
             override fun onEvent(es: EventSource, id: String?, type: String?, data: String) = handleEvent(runId, data)
             override fun onFailure(es: EventSource, t: Throwable?, response: okhttp3.Response?) {
                 // Stream dropped mid-run: fall back to status polling (never lose the answer).
-                scope.launch { pollUntilTerminal(a, runId) }
+                scope.launch { watchRun(a, runId) }
             }
             override fun onClosed(es: EventSource) {
                 // Not only terminal events close streams: a run parked in approval (or a proxy
                 // timeout) ends the SSE too. If we haven't settled, keep watching via polling —
                 // finishWith's exactly-once guard makes this safe alongside a real terminal event.
-                if (lastFinishedRun != runId) scope.launch { pollUntilTerminal(a, runId) }
+                if (lastFinishedRun != runId) scope.launch { watchRun(a, runId) }
             }
         }
         eventSource = EventSources.createFactory(http).newEventSource(request, listener)
+        // APPROVAL WATCHDOG (found live 2026-10-26): a run parked on manual approval keeps the
+        // SSE open and SILENT — no approval.request event ever arrives — so the card would never
+        // show. One status poller per run surfaces parked approvals within 3 s and doubles as
+        // the never-lose-the-answer net; watchRun dedups vs the closed-stream fallbacks.
+        scope.launch { watchRun(a, runId) }
+    }
+
+    private var watchPollRun = ""
+
+    /** One [pollUntilTerminal] per run, whoever asks for it first. */
+    private suspend fun watchRun(a: HermesApi, runId: String) {
+        if (watchPollRun == runId) return
+        watchPollRun = runId
+        pollUntilTerminal(a, runId)
     }
 
     private fun handleEvent(runId: String, data: String) {
@@ -402,12 +416,14 @@ class ChatSession(
     private suspend fun pollUntilTerminal(a: HermesApi, runId: String) {
         Log.i(TAG, "poll fallback attached run=$runId")
         var netLogged = false
+        var n = 0
         while (runId == currentRunId) {
             val snap = try { a.runStatus(runId) } catch (e: Exception) {
                 if (!netLogged) { Log.w(TAG, "status poll degraded run=$runId: ${e.message}"); netLogged = true }
                 delay(3_000); continue
             }
             netLogged = false
+            if (++n % 5 == 0) Log.d(TAG, "watch poll #$n run=$runId status=${snap.status} appr=${snap.approval != null}")
             when (snap.status) {
                 "completed" -> return finishWith(snap.output ?: _state.value.live)
                 "failed" -> return finishWith("⚠️ run failed", error = true)
@@ -429,6 +445,7 @@ class ChatSession(
      * (dedup by request_id — pollUntilTerminal re-reports the same approval every 3 s).
      */
     private fun onApprovalArrived(info: ApprovalInfo) {
+        Log.i(TAG, "approval arrived run=${info.runId} req=${info.requestId} active=$activeId choices=${info.choices}")
         _state.value = _state.value.copy(approval = info)
         if (WearApp.Graph.isForeground) return
         val key = info.requestId ?: info.runId

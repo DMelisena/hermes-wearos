@@ -88,9 +88,15 @@ fun ChatScreen(
         val qRow = ChatAnchor.questionRow(
             state.messages.indexOfLast { it.role == dev.hermes.wearos.domain.ChatMessage.Role.User },
         )
-        val starting = state.busy && state.live.isEmpty()
+        val starting = state.busy && state.live.isEmpty() && state.approval == null
         val holding = state.busy && state.live.isNotEmpty() && !listState.canScrollForward
-        if (starting && qRow != null) {
+        if (state.approval != null) {
+            // APPROVAL CENTERS (owner demo 2026-10-26): the card is the actionable row and the
+            // list may already sit at its end (lazy tail) — the tail push can't lift a card that
+            // was inserted ABOVE the viewport. scrollToItem(idx, 0) lands idx on the list's
+            // center anchor = dead-center in the circle, every time (measured on-device).
+            listState.scrollToItem(state.messages.size.coerceIn(0, listState.layoutInfo.totalItemsCount - 1), 0)
+        } else if (starting && qRow != null) {
             // Pin the question at the list's Middle anchor — the answer grows downward from it.
             listState.scrollToItem(qRow.coerceAtMost(listState.layoutInfo.totalItemsCount - 1), 0)
         } else if (!holding && idx > 0) {
