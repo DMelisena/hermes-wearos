@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
  *  -e session_fork <id> / -e session_delete <id> (the Sessions long-press menu, see §12.4 follow-up),
  *  -e session_archive <id> / -e session_unarchive <id> (🗃 hide/restore, desktop semantics),
  *  -e search <q> (types into the Sessions search box — adb input text can't traverse the IME),
- *  -e ptt_demo <partial|''> (forces the PTT overlay for screenshots),
+ *  -e ptt_demo <partial|off> (forces the PTT overlay for screenshots; NEVER -ez — see handler),
  *  -e fontscale <1.4|reset> (persist+apply pinch font-scale without fingers),
  *  -e viewer_demo [scale] (open the media viewer on a generated card — sub-fit zoom proof;
  *  scale like 0.5 opens BELOW fit directly, 0/false closes).
@@ -78,9 +78,11 @@ class DevAskReceiver : BroadcastReceiver() {
             WearApp.Graph.devResumeSession(it, intent.getStringExtra("resume_profile").orEmpty()); return
         }
         if (intent?.hasExtra("ptt_demo") == true) {
-            // "" clears the forced overlay; any other value shows it with that partial.
-            WearApp.Graph.devPtt.value = intent.getStringExtra("ptt_demo").orEmpty()
-                .takeIf { it.isNotEmpty() }
+            // NOTE: `am` silently mis-handles `-ez key bool` (sets pkg=true/false → the receiver
+            // never sees it) — always send `-e ptt_demo <text|off>`. Any text shows the overlay
+            // with that partial; "off"/"false"/"reset" clears it.
+            WearApp.Graph.devPtt.value = intent.getStringExtra("ptt_demo")
+                ?.takeIf { it.isNotBlank() && !it.equals("off", true) && !it.equals("false", true) }
             return
         }
         intent?.getStringExtra("fontscale")?.let {
