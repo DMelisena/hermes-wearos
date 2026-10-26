@@ -299,6 +299,28 @@ learning, not for aiming. Sectors activate past `ACTIVATE_RADIUS_REF` (never a j
 lane only arms on a drag that crosses before the long-press timeout, so **tap = hands-free and
 hold = PTT are untouched** (`OrbGesture` keeps the race, `OrbDial` classifies the direction).
 
+**Re-aim (owner batch 5: "if I go up I should still be able to move over to one of the others"):**
+arming the dial BEATS the hold timer outright. Once the gate is crossed the gesture belongs to the
+dial until the finger lifts — time passing never freezes the vector — and the lane is decided by
+the finger's angle **at release**, so up-then-slide-left-then-release picks 10:30. (The old bug:
+`Tracker.move` froze dx/dy when the long-press timeout expired mid-drag, ~0.4 s in.)
+
+**SPIN mode (`domain/DialSpin.kt`, owner batch 5: "slide it up, go right or left, the little
+icons turn around you, come back to the middle and let go").** While the finger holds the TOP arc
+(`SPIN_UP_ARC_DEG`), lateral travel accumulates; every `SPIN_STEP_REF` px is one DETENT that walks
+the lit slot one position toward the sweep (haptic tick each) and rotates the whole ring
+(`phaseDeg`, 130 ms tween) so the chosen icon travels under the finger. Design locks, all pinned
+in `DialSpinTest`: below one detent of lean nothing engages (pure aim unchanged); spin arms only
+from the top arc (side/bottom drags aim directly like always); the walk home FREEZES the steps
+(approaching the commit spot must not un-step the selection); while spinning, release commits the
+LIT slot from anywhere — the middle included. The crowded lower slots are the ones this reaches
+without the finger ever leaving the comfort zone.
+
+**The back button never quits (owner batch 5: "back from the keyboard exited Hermes"):** one
+enabled-when-anything-is-open `BackHandler` closes the top layer first — editor → prompt sheet
+→ delete-confirm → action sheet → agent picker → ⌘ overlay → media viewer; only with all closed do
+the screen handlers (Sessions/Chats/Settings → Chat) or the plain system exit take the press.
+
 **Screen after the change:** the three satellites (agent / sessions / mute) are gone from
 `BottomLayout`+`OrbCluster`, the two header chips are gone; a single passive caption line (agent ·
 chat · status, no touch target) is all that stays. Mute state reads on the ring glyph + that caption.
