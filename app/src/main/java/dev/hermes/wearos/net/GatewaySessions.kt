@@ -20,6 +20,13 @@ object GatewaySessions {
     /** Filter-chip sentinel for "every profile" (owner: continue my computer chats + agent chats). */
     const val FILTER_ALL = ""
 
+    /**
+     * Filter-chip sentinel for the ARCHIVED list (owner batch 5: "archive instead of delete"):
+     * archived rows ride their own fetch (the normal lists hide them, desktop-style), and this
+     * NUL-prefixed sentinel selects that list in the chip row. No real profile name can collide.
+     */
+    const val FILTER_ARCHIVED = "\u0000archived"
+
     data class Info(
         val id: String,
         val title: String,
@@ -28,6 +35,8 @@ object GatewaySessions {
         val messages: Int,
         /** Gateway profile the row came from ("" when the source didn't say — pre-cross-profile caches). */
         val profile: String = "",
+        /** True only on rows from the archived fetch — the 🗃 chip's exclusive content. */
+        val archived: Boolean = false,
     )
 
     /** Parse + newest-first sort; malformed JSON throws (caller decides cache-vs-error). */
@@ -38,7 +47,8 @@ object GatewaySessions {
             val id = o.str("id") ?: return@mapNotNull null
             val sec = (o["last_active"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull() ?: 0.0
             val msgs = (o["message_count"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0
-            Info(id, o.str("title") ?: "", (sec * 1000).toLong(), msgs, o.str("profile") ?: "")
+            val arch = (o["archived"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            Info(id, o.str("title") ?: "", (sec * 1000).toLong(), msgs, o.str("profile") ?: "", arch)
         }.sortedByDescending { it.lastActiveMs }
     }
 
@@ -69,7 +79,7 @@ object GatewaySessions {
     fun encode(rows: List<Info>): String {
         val data = rows.joinToString(",") {
             "{\"id\":${jstr(it.id)},\"title\":${jstr(it.title)},\"last_active\":${it.lastActiveMs / 1000.0}," +
-                "\"message_count\":${it.messages},\"profile\":${jstr(it.profile)}}"
+                "\"message_count\":${it.messages},\"profile\":${jstr(it.profile)},\"archived\":${if (it.archived) "true" else "false"}}"
         }
         return "{\"object\":\"list\",\"data\":[$data]}"
     }

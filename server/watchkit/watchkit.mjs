@@ -470,6 +470,33 @@ async function handleSessionFork(req, res, ip, body) {
   }
 }
 
+// ARCHIVE / UNARCHIVE (owner batch 5: "archive instead of delete" — desktop semantics): flip the
+// sessions.archived flag the sidebar and /sessions already filter on. Hide is the polite verb;
+// delete stays for the sure thing. A gone session answers 200 with changed:0 (idempotent like
+// delete), because the button means *get it off my list*, not *prove the row existed*.
+async function handleSessionArchive(req, res, ip, body) {
+  const t0 = Date.now();
+  const profile = String(body.profile || 'default').trim();
+  const sessionId = String(body.session_id || '').trim();
+  const archived = Number(body.archived ?? 1) ? 1 : 0;
+  if (!SESSIONS_PROFILE_RE.test(profile))
+    return done(res, sendErr(res, 400, 'bad profile'), t0, ip, 'session_archive', 400);
+  if (!SESSION_ID_RE.test(sessionId))
+    return done(res, sendErr(res, 400, 'bad session id'), t0, ip, 'session_archive', 400);
+  let db = null;
+  try {
+    db = await openStore(profile, false);
+    if (!db) return done(res, sendErr(res, 404, 'store missing'), t0, ip, 'session_archive', 404);
+    const r = db.prepare('UPDATE sessions SET archived = ? WHERE id = ?').run(archived, sessionId);
+    const out = JSON.stringify({ object: 'hermes.session.archived', id: sessionId, profile, archived: !!archived, changed: r.changes });
+    return done(res, send(res, 200, out), t0, ip, 'session_archive', 200, undefined, r.changes);
+  } catch (e) {
+    return done(res, sendErr(res, 503, `archive failed: ${String(e?.message || e)}`.slice(0, 200)), t0, ip, 'session_archive', 503);
+  } finally {
+    try { db?.close(); } catch { /* gone */ }
+  }
+}
+
 async function handleSessionDelete(req, res, ip, body) {
   const t0 = Date.now();
   const profile = String(body.profile || 'default').trim();
@@ -853,13 +880,15 @@ async function handleSessions(req, res, ip, params) {
     db = new DatabaseSync(dbPath, { readOnly: true });
     // Desktop-sidebar semantics (web_routers/sessions.get_sessions defaults): archived + hidden out,
     // cron/tool/subagent noise out, compression continuations folded behind their root (the root's
-    // own recency is chain-maxed via message timestamps below).
+    // own recency is chain-maxed via message timestamps below). `?archived=1` INVERTS the archived
+    // term — the watch's 🗃 chip lists what the sidebar hides (same noise rules, same profile).
+    const wantArchived = String(params.archived ?? '0') === '1';
     const rows = db.prepare(`
       SELECT s.id AS id, s.title AS title, s.message_count AS message_count,
              s.started_at AS started_at, s.last_activity_at AS last_activity_at,
              (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id) AS msg_ts
       FROM sessions s
-      WHERE s.hidden = 0 AND s.archived = 0
+      WHERE s.hidden = 0 AND s.archived = ?
         AND COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')
         AND NOT (s.parent_session_id IS NOT NULL AND EXISTS (
           SELECT 1 FROM sessions p WHERE p.id = s.parent_session_id AND p.end_reason = 'compression'
@@ -867,13 +896,14 @@ async function handleSessions(req, res, ip, params) {
             AND json_extract(COALESCE(s.model_config, '{}'), '$._delegate_from') IS NULL))
       ORDER BY COALESCE(s.last_activity_at, s.started_at) DESC
       LIMIT ?
-    `).all(limit);
+    `).all(wantArchived ? 1 : 0, limit);
     const data = rows.map((r) => ({
       id: String(r.id),
       title: String(r.title ?? ''),
       last_active: Math.max(saneEpochSec(r.msg_ts), saneEpochSec(r.last_activity_at), saneEpochSec(r.started_at)),
       message_count: Number(r.message_count) || 0,
       profile,
+      ...(wantArchived ? { archived: true } : {}),
     })).sort((a, b) => b.last_active - a.last_active);
     const body = JSON.stringify({ object: 'list', data, profile, limit, offset: 0, has_more: false });
     return done(res, send(res, 200, body), t0, ip, 'sessions', 200, undefined, data.length);
@@ -994,11 +1024,12 @@ const server = http.createServer(async (req, res) => {
     // Cross-profile sessions for the watch's Sessions screen (owner: continue computer chats).
     // Session management for the watch's long-press menu (SPEC §12.4 follow-up): fork any session
     // into the current agent, delete any session. Bearer-guarded like every other route.
-    if (req.method === 'POST' && (url === '/session_fork' || url === '/session_delete')) {
+    if (req.method === 'POST' && (url === '/session_fork' || url === '/session_delete' || url === '/session_archive')) {
       let q;
       try { q = JSON.parse((await readBody(req, JSON_MAX_BYTES)).toString('utf8')); }
       catch { return done(res, sendErr(res, 400, 'bad json body'), Date.now(), ip, url.slice(1), 400); }
       if (url === '/session_fork') return await handleSessionFork(req, res, ip, q);
+      if (url === '/session_archive') return await handleSessionArchive(req, res, ip, q);
       return await handleSessionDelete(req, res, ip, q);
     }
     // Full-text session search for the watch's Sessions screen (SPEC §12.4).

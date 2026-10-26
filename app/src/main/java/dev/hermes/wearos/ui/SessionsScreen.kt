@@ -66,11 +66,16 @@ fun SessionsScreen(
     // LONG-PRESS (owner: "hold a session — fork or delete, delete double-checked"): the sheet +
     // its confirm live in MainActivity (they touch session + screen state); this file only asks.
     onManage: (GatewaySessions.Info) -> Unit = {},
+    // ARCHIVED rows (owner batch 5: "archive instead of delete"): their own fetch, their own chip
+    // — the chip only exists while there is something to bring back.
+    archived: List<GatewaySessions.Info> = emptyList(),
 ) {
-    val shown = GatewaySessions.filterProfile(sessions, filter)
+    val shown = if (filter == GatewaySessions.FILTER_ARCHIVED) archived
+        else GatewaySessions.filterProfile(sessions, filter)
     val chips = buildList {
         add(GatewaySessions.FILTER_ALL)
         addAll(GatewaySessions.profilesIn(sessions))
+        if (archived.isNotEmpty()) add(GatewaySessions.FILTER_ARCHIVED)
     }
     ScalingLazyColumn(
         modifier = Modifier.fillMaxWidth(),
@@ -151,7 +156,11 @@ fun SessionsScreen(
                     chips.forEach { c ->
                         val sel = c == filter
                         Text(
-                            if (c == GatewaySessions.FILTER_ALL) "all" else ProfileLogic.chipLabel(c),
+                            when (c) {
+                                GatewaySessions.FILTER_ALL -> "all"
+                                GatewaySessions.FILTER_ARCHIVED -> "🗃 archived"
+                                else -> ProfileLogic.chipLabel(c)
+                            },
                             style = MaterialTheme.typography.caption3,
                             color = if (sel) MaterialTheme.colors.primary else MaterialTheme.colors.onBackground.copy(alpha = 0.7f),
                             maxLines = 1,
@@ -181,7 +190,11 @@ fun SessionsScreen(
         if (shown.isEmpty()) {
             item {
                 Text(
-                    if (meta.stale) "no cached list yet — refresh once online" else "no sessions yet",
+                    when {
+                        filter == GatewaySessions.FILTER_ARCHIVED -> "nothing archived 🗃"
+                        meta.stale -> "no cached list yet — refresh once online"
+                        else -> "no sessions yet"
+                    },
                     style = MaterialTheme.typography.caption2,
                     color = MaterialTheme.colors.onBackground.copy(alpha = 0.5f),
                     textAlign = TextAlign.Center,
@@ -316,8 +329,10 @@ fun SessionActionSheet(
     title: String,
     profileTag: String,
     onFork: () -> Unit,
+    onArchive: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
+    isArchived: Boolean = false,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
@@ -346,13 +361,23 @@ fun SessionActionSheet(
                 onClick = onFork,
                 modifier = Modifier.size(width = 200.dp, height = 38.dp),
             ) { Text("⑂ fork & open", style = MaterialTheme.typography.button) }
+            // ARCHIVE is the polite verb (owner batch 5: "archive instead of delete") — hide from
+            // the lists, undo lives on the wrist via the 🗃 chip. On an archived row the same
+            // button brings it back.
             Button(
-                onClick = onDelete,
+                onClick = onArchive,
                 modifier = Modifier.size(width = 200.dp, height = 38.dp),
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = MaterialTheme.colors.error.copy(alpha = 0.55f),
+                    backgroundColor = MaterialTheme.colors.primary.copy(alpha = 0.28f),
                 ),
-            ) { Text("🗑 delete", style = MaterialTheme.typography.button) }
+            ) { Text(if (isArchived) "♻️ unarchive" else "🗃 archive", style = MaterialTheme.typography.button) }
+            Button(
+                onClick = onDelete,
+                modifier = Modifier.size(width = 200.dp, height = 30.dp),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = MaterialTheme.colors.error.copy(alpha = 0.25f),
+                ),
+            ) { Text("🗑 delete…", style = MaterialTheme.typography.caption2) }
             Button(
                 onClick = onDismiss,
                 modifier = Modifier.size(width = 90.dp, height = 32.dp),

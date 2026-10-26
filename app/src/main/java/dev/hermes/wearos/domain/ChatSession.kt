@@ -91,6 +91,10 @@ class ChatSession(
     /** Gateway session list for the sessions fast-path (owner ask #2). */
     private val _gatewaySessions = MutableStateFlow<List<GatewaySessions.Info>>(emptyList())
     val gatewaySessions: StateFlow<List<GatewaySessions.Info>> = _gatewaySessions
+
+    /** Archived rows for the current agent (🗃 chip; refreshed with every list refresh). */
+    private val _archivedSessions = MutableStateFlow<List<GatewaySessions.Info>>(emptyList())
+    val archivedSessions: StateFlow<List<GatewaySessions.Info>> = _archivedSessions
     private val _sessionsMeta = MutableStateFlow(SessionsMeta())
     val sessionsMeta: StateFlow<SessionsMeta> = _sessionsMeta
 
@@ -813,6 +817,40 @@ class ChatSession(
         }
     }
 
+    /**
+     * LONG-PRESS → 🗃 ARCHIVE / UNARCHIVE (owner batch 5: *"archive instead of delete"*): flips
+     * the flag every list already filters on — desktop semantics, hide now / show later, and the
+     * undo lives on the wrist too (the 🗃 chip). Hard delete keeps its double check; the watch's
+     * own CHAT of the session is deliberately left alone — archiving history should not
+     * vaporize the conversation you are looking at.
+     */
+    fun archiveBrowserSession(info: GatewaySessions.Info, archived: Boolean, onDone: (Boolean, String) -> Unit) {
+        scope.launch {
+            val res = runCatching {
+                Watchkit.archiveSession(info.profile.ifBlank { settings.profileSync() }, info.id, archived)
+            }
+            if (res.isFailure) {
+                val why = (res.exceptionOrNull()?.message ?: "archive failed")
+                Log.w(TAG, "session archive ${info.id} failed: $why")
+                onDone(false, why.take(140))
+                return@launch
+            }
+            Log.i(TAG, "session ${if (archived) "archived" else "unarchived"} ${info.id}")
+            refreshGatewaySessions() // both lists: the row must leave one and appear in the other
+            onDone(true, if (archived) "archived" else "unarchived")
+        }
+    }
+
+    /** Dev-hook entry (`-e session_archive/-e session_unarchive <id>`): resolve profile from either cached list. */
+    fun manageArchiveById(sessionId: String, archived: Boolean, onDone: (Boolean, String) -> Unit) {
+        val id = sessionId.trim()
+        if (id.isEmpty()) return
+        val row = _gatewaySessions.value.firstOrNull { it.id == id }
+            ?: _archivedSessions.value.firstOrNull { it.id == id }
+            ?: GatewaySessions.Info(id, "", 0L, 0, settings.profileSync(), archived = !archived)
+        archiveBrowserSession(row, archived, onDone)
+    }
+
     /** Dev-hook entry (`-e session_fork/-e session_delete <id>`): resolve the row's profile from the cached list. */
     fun manageSessionById(sessionId: String, fork: Boolean, onDone: (Boolean, String) -> Unit) {
         val id = sessionId.trim()
@@ -931,6 +969,11 @@ class ChatSession(
     fun refreshGatewaySessions() {
         scope.launch {
             val current = settings.profileSync()
+            // The 🗃 chip's content + visibility (owner: archive instead of delete). Fail-soft: no
+            // archived list simply means no chip — the normal list is untouched by its failure.
+            _archivedSessions.value = try {
+                GatewaySessions.parseProfiled(Watchkit.fetchSessionsJson(current, archived = true), current)
+            } catch (e: Exception) { emptyList() }
             val (mine, error) = try {
                 GatewaySessions.parseProfiled(api().sessionsJson(), current) to ""
             } catch (e: Exception) {

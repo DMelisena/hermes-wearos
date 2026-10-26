@@ -460,6 +460,13 @@ profile's key, and most profiles have none (§12.2) — the desktop `default` st
 - The double check is a second sheet saying what dies (“every message goes with it — no undo”);
   confirm sits where a mis-tap hits “keep”. Dev twins: `-e session_fork/-e session_delete <id>`
   (profile resolved from the cached Sessions list).
+- **🗃 ARCHIVE is the polite verb (owner batch 5: *“archive instead of delete”*).** The sheet reads
+  fork / **archive** / delete-quiet-line: hide by flipping `sessions.archived`, the exact flag the
+  desktop sidebar and watchkit `/sessions` already filter on — nothing is destroyed and the undo
+  lives on the wrist: `GET /sessions?archived=1` feeds a **🗃 archived** chip that appears only
+  while anything is hidden, and long-pressing one of those rows offers ♻️ unarchive. The watch's
+  own CHAT of an archived session deliberately survives — hiding history shouldn't vaporize the
+  conversation open under your thumb. Delete keeps its double check for the sure thing.
 
 ---
 

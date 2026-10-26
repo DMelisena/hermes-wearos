@@ -267,6 +267,27 @@ object Watchkit {
             }
         }
 
+    /**
+     * SESSION ARCHIVE / UNARCHIVE (owner batch 5: "archive instead of delete"): flips the flag the
+     * lists already filter on — desktop semantics, hide now show later. The archived list arrives
+     * through [fetchSessionsJson] with `archived = true`.
+     */
+    suspend fun archiveSession(profile: String, sessionId: String, archived: Boolean): Unit =
+        withContext(Dispatchers.IO) {
+            val cfg = _config.value
+            val body = "{\"profile\":${esc(profile)},\"session_id\":${esc(sessionId)}," +
+                "\"archived\":${if (archived) 1 else 0}}"
+            val req = Request.Builder()
+                .url(cfg.baseUrl.toHttpUrl().newBuilder().addPathSegment("session_archive").build())
+                .post(body.toRequestBody(JSON_MEDIA))
+                .header("Authorization", "Bearer ${cfg.token}")
+                .build()
+            clientCall(req) { r ->
+                val text = r.body?.string().orEmpty()
+                if (!r.isSuccessful) throw ApiException(r.code, "archive ${r.code}: ${text.take(140)}")
+            }
+        }
+
     /** SESSION DELETE (double-confirmed on the wrist before this fires). Already-gone = success. */
     suspend fun deleteSession(profile: String, sessionId: String): DeleteResult = withContext(Dispatchers.IO) {
         val cfg = _config.value
@@ -289,12 +310,17 @@ object Watchkit {
      * `/api/sessions` shape + a per-row `profile`, so GatewaySessions.parse handles it verbatim.
      * Throws ApiException/IOException — the caller degrades to the single-profile list.
      */
-    suspend fun fetchSessionsJson(profile: String, limit: Int = GatewaySessions.MAX_ROWS): String = withContext(Dispatchers.IO) {
+    suspend fun fetchSessionsJson(
+        profile: String,
+        limit: Int = GatewaySessions.MAX_ROWS,
+        archived: Boolean = false,
+    ): String = withContext(Dispatchers.IO) {
         val cfg = _config.value
         val url = cfg.baseUrl.toHttpUrl().newBuilder()
             .addPathSegment("sessions")
             .addQueryParameter("profile", profile)
             .addQueryParameter("limit", limit.coerceIn(1, GatewaySessions.MAX_ROWS).toString())
+            .apply { if (archived) addQueryParameter("archived", "1") }
             .build().toString()
         val req = Request.Builder().url(url).get()
             .header("Authorization", "Bearer ${cfg.token}")

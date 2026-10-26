@@ -16,6 +16,8 @@ import kotlinx.coroutines.launch
  *  -e body_status, -e body_push). UI-epic additions: -e agents_list, -e agent <name>,
  *  -e sessions_dump, -e resume_session <id> [-e resume_profile <p>], -e stop_mid_run [text], -e loc_status,
  *  -e session_fork <id> / -e session_delete <id> (the Sessions long-press menu, see §12.4 follow-up),
+ *  -e session_archive <id> / -e session_unarchive <id> (🗃 hide/restore, desktop semantics),
+ *  -e search <q> (types into the Sessions search box — adb input text can't traverse the IME),
  *  -e ptt_demo <partial|''> (forces the PTT overlay for screenshots),
  *  -e fontscale <1.4|reset> (persist+apply pinch font-scale without fingers),
  *  -e viewer_demo [scale] (open the media viewer on a generated card — sub-fit zoom proof;
@@ -158,6 +160,20 @@ class DevAskReceiver : BroadcastReceiver() {
                 Log.i("HermesWear", "dev: session_fork ${if (ok) "ok — $msg" else "FAILED — $msg"}")
             }
             Log.i("HermesWear", "dev: session_fork '$id' queued")
+            return
+        }
+        intent?.getStringExtra("session_archive")?.let { id ->
+            WearApp.Graph.session.manageArchiveById(id, archived = true) { ok, msg ->
+                Log.i("HermesWear", "dev: session_archive ${if (ok) "ok — $msg" else "FAILED — $msg"}")
+            }
+            Log.i("HermesWear", "dev: session_archive '$id' queued")
+            return
+        }
+        intent?.getStringExtra("session_unarchive")?.let { id ->
+            WearApp.Graph.session.manageArchiveById(id, archived = false) { ok, msg ->
+                Log.i("HermesWear", "dev: session_unarchive ${if (ok) "ok — $msg" else "FAILED — $msg"}")
+            }
+            Log.i("HermesWear", "dev: session_unarchive '$id' queued")
             return
         }
         intent?.getStringExtra("session_delete")?.let { id ->

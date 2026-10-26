@@ -144,6 +144,7 @@ class MainActivity : ComponentActivity() {
                 val agentList by agents.agents.collectAsState()
                 val agentsRefreshing by agents.refreshing.collectAsState()
                 val gatewaySessions by session.gatewaySessions.collectAsState()
+                val archivedSessions by session.archivedSessions.collectAsState()
                 val sessionsMeta by session.sessionsMeta.collectAsState()
                 val devPtt by WearApp.Graph.devPtt.collectAsState()
                 val devEditor by WearApp.Graph.devEditor.collectAsState()
@@ -154,6 +155,12 @@ class MainActivity : ComponentActivity() {
                 var draft by remember { mutableStateOf("") }
                 var showAgents by remember { mutableStateOf(false) }
                 var sessionFilter by remember { mutableStateOf(GatewaySessions.FILTER_ALL) }
+                // 🗃 chip auto-exits when its last row was unarchived (an empty chip would strand
+                // the user on an empty list they can see is empty).
+                androidx.compose.runtime.LaunchedEffect(archivedSessions.isEmpty()) {
+                    if (archivedSessions.isEmpty() && sessionFilter == GatewaySessions.FILTER_ARCHIVED)
+                        sessionFilter = GatewaySessions.FILTER_ALL
+                }
                 // OWNER BATCH 2 (asks #5/#6): long-pressed prompt → sheet → full-screen editor.
                 var promptSheet by remember { mutableStateOf<dev.hermes.wearos.domain.ChatMessage?>(null) }
                 var editor by remember { mutableStateOf<EditorReq?>(null) }
@@ -539,6 +546,7 @@ class MainActivity : ComponentActivity() {
                             SessionsScreen(
                                 agent = profile,
                                 sessions = gatewaySessions,
+                                archived = archivedSessions,
                                 meta = sessionsMeta,
                                 filter = sessionFilter,
                                 onFilter = { sessionFilter = it },
@@ -680,6 +688,19 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onDelete = { manageSheet = null; confirmDelete = row },
+                        onArchive = {
+                            manageSheet = null
+                            session.archiveBrowserSession(row, archived = !row.archived) { ok, msg ->
+                                WearApp.Graph.runOnUi {
+                                    Toast.makeText(
+                                        context,
+                                        if (ok) "🗃 $msg" else "archive failed: $msg",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }
+                        },
+                        isArchived = row.archived,
                         onDismiss = { manageSheet = null },
                     )
                 }

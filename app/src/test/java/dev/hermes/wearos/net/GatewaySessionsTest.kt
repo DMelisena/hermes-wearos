@@ -1,6 +1,7 @@
 package dev.hermes.wearos.net
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -94,6 +95,34 @@ class GatewaySessionsTest {
 
     private fun info(id: String, ms: Long, profile: String = "") =
         GatewaySessions.Info(id, "t", ms, 1, profile)
+
+    // ── ARCHIVED flag (owner batch 5: "archive instead of delete") ────────────
+    @Test fun `archived flag parses bool and string and defaults false for old caches`() {
+        val rows = GatewaySessions.parse(
+            """{"data":[{"id":"a","archived":true},{"id":"b","archived":"true"},""" +
+                """{"id":"c","archived":false},{"id":"d"}]}""",
+        )
+        assertTrue(rows.first { it.id == "a" }.archived)
+        assertTrue(rows.first { it.id == "b" }.archived)   // watchkit tags its archived list
+        assertFalse(rows.first { it.id == "c" }.archived)
+        assertFalse(rows.first { it.id == "d" }.archived)  // pre-archive payload decodes clean
+    }
+
+    @Test fun `archived survives the offline-cache encode round-trip`() {
+        val rows = listOf(
+            GatewaySessions.Info("keep", "t", 1000L, 2, "wear", archived = false),
+            GatewaySessions.Info("hidden", "t", 900L, 3, "wear", archived = true),
+        )
+        val back = GatewaySessions.parse(GatewaySessions.encode(rows))
+        assertEquals(listOf(true, false), back.sortedBy { it.id }.map { it.archived })
+    }
+
+    @Test fun `archived chip sentinel never collides with a profile name in filtering`() {
+        val rows = listOf(info("a", 100L, "wear"))
+        // The sentinel selects a SEPARATE list in the screen; if it ever reached filterProfile it
+        // must simply match nothing rather than accidentally matching everything or a real agent.
+        assertTrue(GatewaySessions.filterProfile(rows, GatewaySessions.FILTER_ARCHIVED).isEmpty())
+    }
 
     @Test fun `merge dedupes by id preferring tagged and fresher rows newest first`() {
         val merged = GatewaySessions.merge(
