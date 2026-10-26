@@ -106,6 +106,7 @@ Advanced (diag ring buffer + upload, poll interval, dev options).
 | F16 | Edit & resend **forks** the session (`/api/sessions/{id}/fork`) and truncates the local transcript at the edited turn — desktop branching semantics, no gateway change (§12.5) |
 | F17 | Multi-agent switching that WORKS: per-agent `API_SERVER_KEY`s learned from the gateway box, sessions preloaded per agent through watchkit (§12.2 — the bug this branch exists for) |
 | F18 | Session search: title/id offline, message BODIES via watchkit's FTS5 read of `state.db` (`GET /search`), voice-or-type query (§12.4) |
+| F19 | Session management: LONG-PRESS a session → ␂ fork-into-this-agent-and-open, or 🗑 delete with a real double-check — for EVERY profile, key or not (§12.6) |
 | F19 | Record → gateway STT lane (dial 3:00): watch records WAV, gateway transcribes; backend configurable (branch 2 — §13.4) |
 | F20 | Voice-note ring buffer (dial 4:30): last N on-device transcripts, long-press copy, tap-paste into the draft (branch 2 for the on-device-vs-gateway quality swipe — §13.4) |
 
@@ -412,6 +413,31 @@ Honest limit, printed as a system line in the transcript instead of hidden: the 
 visible note — a vanished edit would be worse than a piled one. The same primitives honor `/fork`
 in place (`forkActive`) and `/btw <aside>` as a real side thread (`sideAsk`: a NEW watch chat on a
 forked session, parent never sees it, dial 7:30 switches back).
+
+
+### 12.6 Session management (F19) — long-press → fork / delete
+
+Owner: *“click and hold on the session itself… fork or delete as options, and delete should double
+check.”* Both actions run through watchkit **writing `state.db`** — the one path that works for
+EVERY session: the gateway's `DELETE /api/sessions/{id}` (verified live, 200) needs the source
+profile's key, and most profiles have none (§12.2) — the desktop `default` store never will.
+
+- **`POST /session_fork {profile, session_id, to_profile?, new_id}`** copies session + messages
+  column-wise over the **intersection** of the two stores' schemas (a version-skewed pair degrades
+  instead of crashing), sets `parent_session_id` to the origin (lineage the desktop understands),
+  suffixes the title “ (fork)”, lands the child `hidden=0 archived=0` so it shows immediately, and
+  INSERTs through the store's own FTS triggers — a fork is searchable the moment it exists
+  (verified: snippet hit before the next delete pulled it out). The watch forks INTO the current
+  agent under a fresh `<profile>-watch-x` id — a fork of a desktop chat becomes a watch-owned chat
+  you can keep talking in; `resumeGatewaySession` opens it and backfills the copied transcript.
+- **`POST /session_delete {profile, session_id}`** is REAL (messages then session; FTS delete
+  triggers keep the index honest). “Already gone” answers 200 — the button means *get it off my
+  list*. The watch also removes the ⌚ mirror chat (`SessionManage.localMirror` joins on
+  `sessionTitle`, the SPEC §3 key); if the doomed row is the OPEN chat, a sibling takes the seat
+  first, because `ChatStore.delete` refuses the active one.
+- The double check is a second sheet saying what dies (“every message goes with it — no undo”);
+  confirm sits where a mis-tap hits “keep”. Dev twins: `-e session_fork/-e session_delete <id>`
+  (profile resolved from the cached Sessions list).
 
 ---
 
