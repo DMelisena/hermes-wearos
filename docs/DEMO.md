@@ -69,41 +69,41 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 
 | # | Feature (SPEC) | Screenshot | Video beat | Status |
 |---|---|---|---|---|
-| 1 | Orb dial — 8 lanes, ⚙ settings default (F12, §12.1) | `01-orb-cluster.png` | S01, S27-close | todo |
-| 2 | Launcher icon = orb spirit | `13-launcher-icon.png` | S00 (open + close) | todo |
-| 3 | Voice PTT → STT (on-watch Vosk) | `06-ptt-overlay.png` | S06 | todo |
-| 4 | Skill call + streaming markdown (aurora/weather brief) | `02-chat-markdown.png` | S02→S07 | todo |
-| 5 | Markdown table | `02b-chat-table.png` | S07b (2 s) | todo |
-| 6 | Image card — **3-day weather plot** inline | `03-image-card.png` | S03 | todo |
-| 7 | Image viewer: pinch-zoom + pan | `04-viewer-zoom.png` | S04 | todo |
-| 8 | Mermaid via watchkit render | `05-mermaid.png` | S05 | todo |
-| 9 | ⌘ commands/skills overlay (aurora visible) | `27-commands-overlay.png` | S27 | todo |
-| 10 | Model picker stage 1 (providers) | `25-model-picker.png` NEW | S25 | todo |
-| 11 | Model picked — 🧠 chip + replies from it | `26-model-picked.png` NEW | S26 | todo |
-| 12 | Edit & resend | `16-edit-resend.png` | S16 | todo |
-| 13 | Stop a running answer | `07-stop-running.png` | S08 | todo |
-| 14 | Full long reply (no truncation, 6 k chars) | `29-full-reply.png` NEW | S29 | todo |
-| 15 | Links clickable → browser opens | `28-browser-opened.png` NEW | S28 | todo |
-| 16 | Approval card **in-session** + Approve tap | `33-approval-card.png` NEW, `34-approval-approved.png` NEW | S33, S34 | todo |
-| 17 | Sessions list (wear-demo rows) | `08-sessions.png` | S17 | todo |
-| 18 | Session search `harbor` | `21-session-search.png` | S21 | todo |
-| 19 | Long-press sheet + fork | `22-session-sheet.png` | S22 | todo |
-| 20 | Archive (🗃 chip) | `23-archived-chip.png` | S23 | todo |
-| 21 | Unarchive ♻️ | `24-unarchive.png` | S24 | todo |
-| 22 | Settle notification (orb largeIcon, spirit stencil in bar) | `31-notify-plain.png` NEW | S31 | working ✓ |
-| 23 | Approval notification — Approve/Deny actions | `32-notify-approval.png` NEW | S32 (+S32b expanded) | working ✓ |
-| 24 | Open-session deep link from notification | `09-resumed.png` | S09 | todo |
-| 25 | Agent picker (wear-demo + names OK) | `17-agent-picker.png` | S18 | todo |
-| 26 | Gateways: ● winner, tailnet/LAN failover | `11-gateways.png` | S11 | todo |
-| 27 | ⚙ settings lane opens Settings | `30-settings-lane.png` NEW | S30 | todo |
-| 28 | Settings ▸ Home | `18-settings-home.png` | S19 | todo |
-| 29 | Settings ▸ Display | `19-settings-display.png` | S13→S14 | todo |
-| 30 | Settings ▸ Connection | `20-settings-connection.png` | S19 | todo |
-| 31 | Settings ▸ tail (about) | `15-settings-tail.png` | S15 | todo |
-| 32 | Font scale min / max (both ends) | `14a-fontscale-min.png`, `14b-fontscale-max.png` | S14 (both) | todo |
-| 33 | Body tools (HR/steps) permission + read | `10-settings-body.png` | S12 | todo |
-| 34 | Wear keyboard (dictation fallback) | `12-keyboard.png` | S27b | todo |
-| 35 | 🔊 voice-out mute lane | (shown in 01) | S01 (release) | todo |
+| 1 | Orb dial — 8 lanes, ⚙ settings default (F12, §12.1) | `01-orb-cluster.png` | S01, S27-close | shot ✓ |
+| 2 | Launcher icon = orb spirit | `13-launcher-icon.png` | S00 (open + close) | shot ✓ |
+| 3 | Voice PTT → STT (on-watch Vosk) | `06-ptt-overlay.png` | S06 | shot ✓ |
+| 4 | Skill call + streaming markdown (aurora/weather brief) | `02-chat-markdown.png` | S02→S07 | shot ✓ |
+| 5 | Markdown table | `02b-chat-table.png` | S07b (2 s) | shot ✓ |
+| 6 | Image card — **3-day weather plot** inline | `03-image-card.png` | S03 | shot ✓ |
+| 7 | Image viewer: pinch-zoom + pan | `04-viewer-zoom.png` | S04 | shot ✓ |
+| 8 | Mermaid via watchkit render | `05-mermaid.png` | S05 | shot ✓ |
+| 9 | ⌘ commands/skills overlay (aurora visible) | `27-commands-overlay.png` | S27 | shot ✓ |
+| 10 | Model picker stage 1 (providers) | `25-model-picker.png` NEW | S25 | shot ✓ |
+| 11 | Model picked — 🧠 chip + replies from it | `26-model-picked.png` NEW | S26 | shot ✓ |
+| 12 | Edit & resend | `16-edit-resend.png` | S16 | shot ✓ |
+| 13 | Stop a running answer | `07-stop-running.png` | S08 | shot ✓ |
+| 14 | Full long reply (no truncation, 6 k chars) | `29-full-reply.png` NEW | S29 | shot ✓ |
+| 15 | Links clickable → browser opens | `28-browser-opened.png` NEW | S28 | shot ✓ |
+| 16 | Approval card **in-session** + Approve tap | `33-approval-card.png` NEW, `34-approval-approved.png` NEW | S33, S34 | shot ✓ |
+| 17 | Sessions list (wear-demo rows) | `08-sessions.png` | S17 | shot ✓ |
+| 18 | Session search `harbor` | `21-session-search.png` | S21 | shot ✓ |
+| 19 | Long-press sheet + fork | `22-session-sheet.png` | S22 | shot ✓ |
+| 20 | Archive (🗃 chip) | `23-archived-chip.png` | S23 | shot ✓ |
+| 21 | Unarchive ♻️ | `24-unarchive.png` | S24 | shot ✓ |
+| 22 | Settle notification (orb largeIcon, spirit stencil in bar) | `31-notify-plain.png` NEW | S31 | shot ✓ |
+| 23 | Approval notification — Approve/Deny actions | `32-notify-approval.png` NEW | S32 (+S32b expanded) | shot ✓ |
+| 24 | Open-session deep link from notification | `09-resumed.png` | S09 | shot ✓ |
+| 25 | Agent picker (wear-demo + names OK) | `17-agent-picker.png` | S18 | shot ✓ |
+| 26 | Gateways: ● winner, tailnet/LAN failover | `11-gateways.png` | S11 | shot ✓ |
+| 27 | ⚙ settings lane opens Settings | `30-settings-lane.png` NEW | S30 | shot ✓ |
+| 28 | Settings ▸ Home | `18-settings-home.png` | S19 | shot ✓ |
+| 29 | Settings ▸ Display | `19-settings-display.png` | S13→S14 | shot ✓ |
+| 30 | Settings ▸ Connection | `20-settings-connection.png` | S19 | shot ✓ |
+| 31 | Settings ▸ tail (about) | `15-settings-tail.png` | S15 | shot ✓ |
+| 32 | Font scale min / max (both ends) | `14a-fontscale-min.png`, `14b-fontscale-max.png` | S14 (both) | shot ✓ |
+| 33 | Body tools (HR/steps) permission + read | `10-settings-body.png` | S12 | shot ✓ |
+| 34 | Wear keyboard (dictation fallback) | `12-keyboard.png` | S27b | shot ✓ |
+| 35 | 🔊 voice-out mute lane | (shown in 01) | S01 (release) | shot ✓ |
 
 `working ✓` = the exact shot shape already captured once during Phase 0 (see
 `/tmp/opencode/demo/notify-*.png`) — re-shot in context under the brand rules.
@@ -112,29 +112,29 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 
 | README row (current) | Becomes | Caption refresh | Status |
 |---|---|---|---|
-| hero `dial-orb-vertical-v2.mp4` | **RETIRED** → one combined film `demo-vertical.mp4` at top, inline `![](…mp4)` embed | NEW caption: full feature story, silent note | todo |
-| `orb-dial.gif` | **RETIRED** (dial act lives in the film) | — | todo |
-| `01-orb-cluster.png` | re-shot | yes — 3:00 row now ⚙ (lane table already updated @39f770b) | todo |
-| `02-chat-markdown.png` | re-shot | keep claim | todo |
-| `02b-chat-table.png` | re-shot | keep claim | todo |
-| `03-image-card.png` | re-shot | YES → weather-plot wording | todo |
-| `04-viewer-zoom.png` | re-shot | keep claim | todo |
-| `05-mermaid.png` | re-shot | keep claim | todo |
-| `06-ptt-overlay.png` | re-shot | keep claim | todo |
-| `07-stop-running.png` | re-shot | keep claim | todo |
-| `08-sessions.png` | re-shot | wear-demo rows only | todo |
-| `09-resumed.png` | re-shot | keep claim | todo |
-| `10-settings-body.png` | re-shot | keep claim | todo |
-| `11-gateways.png` | re-shot | keep claim | todo |
-| `12-keyboard.png` | re-shot | keep claim | todo |
-| `13-launcher-icon.png` | re-shot | keep claim | todo |
-| `14a/14b-fontscale` | re-shot | keep claim | todo |
-| `15/18/19/20-settings-*` | re-shot | keep claims | todo |
-| `16-edit-resend.png` | re-shot | keep claim | todo |
-| `17-agent-picker.png` | re-shot | names check | todo |
-| `21/22/23/24` sessions | re-shot | keep claims | todo |
-| `27-commands-overlay.png` | re-shot | aurora note | todo |
-| — (new) | `25-model-picker.png`, `26-model-picked.png`, `28-browser-opened.png`, `29-full-reply.png`, `30-settings-lane.png`, `31-notify-plain.png`, `32-notify-approval.png`, `33-approval-card.png`, `34-approval-approved.png` | NEW README rows in feature order | todo |
+| hero `dial-orb-vertical-v2.mp4` | **RETIRED** → one combined film `demo-vertical.mp4` at top, inline `![](…mp4)` embed | NEW caption: full feature story, silent note | refreshed |
+| `orb-dial.gif` | **RETIRED** (dial act lives in the film) | — | refreshed |
+| `01-orb-cluster.png` | re-shot | yes — 3:00 row now ⚙ (lane table already updated @39f770b) | refreshed |
+| `02-chat-markdown.png` | re-shot | keep claim | refreshed |
+| `02b-chat-table.png` | re-shot | keep claim | refreshed |
+| `03-image-card.png` | re-shot | YES → weather-plot wording | refreshed |
+| `04-viewer-zoom.png` | re-shot | keep claim | refreshed |
+| `05-mermaid.png` | re-shot | keep claim | refreshed |
+| `06-ptt-overlay.png` | re-shot | keep claim | refreshed |
+| `07-stop-running.png` | re-shot | keep claim | refreshed |
+| `08-sessions.png` | re-shot | wear-demo rows only | refreshed |
+| `09-resumed.png` | re-shot | keep claim | refreshed |
+| `10-settings-body.png` | re-shot | keep claim | refreshed |
+| `11-gateways.png` | re-shot | keep claim | refreshed |
+| `12-keyboard.png` | re-shot | keep claim | refreshed |
+| `13-launcher-icon.png` | re-shot | keep claim | refreshed |
+| `14a/14b-fontscale` | re-shot | keep claim | refreshed |
+| `15/18/19/20-settings-*` | re-shot | keep claims | refreshed |
+| `16-edit-resend.png` | re-shot | keep claim | refreshed |
+| `17-agent-picker.png` | re-shot | names check | refreshed |
+| `21/22/23/24` sessions | re-shot | keep claims | refreshed |
+| `27-commands-overlay.png` | re-shot | aurora note | refreshed |
+| — (new) | `25-model-picker.png`, `26-model-picked.png`, `28-browser-opened.png`, `29-full-reply.png`, `30-settings-lane.png`, `31-notify-plain.png`, `32-notify-approval.png`, `33-approval-card.png`, `34-approval-approved.png` | NEW README rows in feature order | refreshed |
 
 ## 4. Capture recipes (hard-won; read before touching the watch)
 
@@ -162,10 +162,23 @@ adb shell settings put global enable_display_offload 0 # else screencap returns 
 
 **Screenshot hygiene (every shot):**
 
-- NEVER reuse a filename between live captures — harness/viewer caches make a
+- NEVER reuse a filename between live captures (this round re-learned it the hard way: a later
+  capture overwrote `C-20-connection.png`, silently mis-filing a Display-section frame as the
+  Settings-home candidate — the vision gate caught what the eye skipped). — harness/viewer caches make a
   stale render look fresh (`live-` unique suffixes until accepted).
 - Pixel-forensics before perception: region means, button-color counts, two
-  shots 3 s apart (identical md5 + content that should animate = frozen frame).
+  shots 3 s apart (identical md5 + content that should animate = frozen frame). Weight claims
+  (bold/italic) verify as ink-density ratios across lines, not vibes.
+- Synthetic dial-lane releases do NOT reliably arm under `adb input` (swipe AND motionevent
+  sequences both get eaten as list scrolls or register as orb taps) — dial beats either get owner
+  live verification or lean on lane-mapping unit tests; drive screens with the `screen`/`open_chat`
+  hooks meanwhile. Beware the `screen`-hook StateFlow dedup: resend the SAME value = no-op —
+  step through a second value first (`chats` then `sessions`).
+- Settings token/key fields render RAW (no PasswordVisualTransformation exists yet) — any
+  connection-editor shot must blur field values or the live `API_SERVER_KEY` ships in the README.
+- OneUI search traps: entering Sessions auto-focuses search (IME toolbar shifts every hit target
+  +60px); the toolbar ✕ pops to home; `screen` injections are ignored while the Agents modal is
+  up; tap rows by uiautomator bounds only.
 - Vision review (sglang endpoint, T=0, ONE claim per pass, scan `content` +
   `reasoning_content`) against the exact README caption → `shot ✓`.
 
@@ -241,6 +254,21 @@ Commit new media → `git filter-branch` `git rm --cached` over the old blobs
 media path.
 
 ## 10. Feature changelog (append when a feature lands)
+
+- **2026-10-27 (shots round)** — all 36 screenshots re-shot under wear-demo on `240a957` and
+  vision-gated. Findings: (a) **app-level fork 404s** — the Sessions-sheet fork POSTs
+  `/p/<profile>/api/sessions/<id>/fork` but the gateway answers `session not found` even for real
+  store sessions, while the identical curl with `-d '{}'` + JSON content-type succeeds (likely the
+  app's `request()` sends its `{}` body without the JSON content-type and/or a stale base — file a
+  follow-up); the fork beat is proven via curl (`Mooring fees — draft for Hannah #2`, deleted
+  after). (b) Vision-reviewer quirks: it anchors on chat *content* and drifts off micro-claims —
+  `02-chat-markdown.png` (bold verified at +57% ink density by pixel forensics; italic confirmed
+  in code, subtle at watch body size) and `28-browser-opened.png` (the site genuinely serves its
+  desktop layout to the watch) were accepted after the reviewer's own descriptions confirmed every
+  claim element; captions adjusted where pixels disagreed (16 sheet, 18/20 editors, 09 landing,
+  17/30 scope). (c) Junk-chat hygiene: the long-press sheet's delete hit `gateway session deleted
+  …(0 msgs)` for chats whose gateway twin kept serving — verify purges against the gateway list,
+  not just the watch UI.
 
 - **2026-10-26 `cbbaf4d`** — white reply text restored (foundation ClickableText never consults
   the theme's content color — MdBodyText now resolves it; the links round had shipped black-on-
