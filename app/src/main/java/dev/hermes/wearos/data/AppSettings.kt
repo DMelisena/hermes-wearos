@@ -229,7 +229,12 @@ class AppSettings(private val context: Context) {
     /** Fetch the catalog for [agent] from watchkit and store it; returns the row count (0 = kept
      *  whatever was there, the built-in floor always stands). */
     suspend fun refreshSlashCatalog(agent: String): Int {
-        val resp = Watchkit.catalog(agent)
+        // Catalog refresh is best-effort BY DEFINITION: watchkit unreachable (dead DNS on a stale
+        // endpoint, phone-asleep gateway, airplane watch) must never take the app down — an
+        // UnknownHostException escaping this exact call crashed the process when the dial fired
+        // the commands lane (owner on-watch repro, dropbox data_app_crash 2026-10-27). Stale
+        // catalog beats no session.
+        val resp = runCatching { Watchkit.catalog(agent) }.getOrNull() ?: return 0
         val rows = CommandCatalog.fromWatchkit(resp.commands)
         // Capabilities come from the GATEWAY when we can reach it (this watch holds the active
         // profile's key — the only client that can ask); watchkit's own flags are the fallback for
@@ -380,7 +385,9 @@ class AppSettings(private val context: Context) {
      */
     suspend fun refreshAgentKeys(): Int {
         val gw = selectedGateway() ?: return 0
-        val rows = Watchkit.agentKeys()
+        // Same guard doctrine as refreshSlashCatalog: unreachable watchkit returns 0 (the mirror
+        // keeps previous keys), it does NOT throw into the caller's launch.
+        val rows = runCatching { Watchkit.agentKeys() }.getOrNull() ?: return 0
         if (rows.isEmpty()) return 0
         val next = gw.agentKeys.toMutableMap()
         for (r in rows) if (r.key.isNotBlank()) next[r.profile] = r.key.trim()
