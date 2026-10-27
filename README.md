@@ -259,8 +259,8 @@ Every knob is on-device, and there are no hidden ones:
 | **Connection editor** — the active profile's base URL + gateway token (redacted here for the screenshot) with **Save** and a live **Test** button. | **Nothing to install on the phone** — the whole assistant is one icon on the watch's app grid. |
 
 The diagnostics screen is the support story: STT model present ✅, TTS engine ready, last push status
-with bytes and age, health-services availability, location fix state. Location is redacted here for
-the screenshot, honest as you can see — your house shouldn't be in a README:
+with bytes and age, health-services availability, location fix state — coordinates pixelated, because
+your house doesn't belong in a README:
 
 <img src="docs/screens/15-settings-tail.png" width="220" alt="Diagnostics screen: push status, health services, STT model present, TTS ready"/>
 
@@ -375,4 +375,4 @@ scripts/doctor.sh                          # toolchain + link health report
 ## License
 
 MIT — see [LICENSE](LICENSE). Screenshots were captured on a physical Galaxy Watch Ultra; the demo
-chats use neutral scripted prompts (the `lat/lng redacted` marker is exactly what it claims).
+chats use neutral scripted prompts; the diagnostics coordinates are pixelated, and every visible pixel is exactly what the watch showed.

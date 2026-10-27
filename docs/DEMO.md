@@ -381,3 +381,9 @@ Branch keeps exactly ONE generation of every tracked media path.
   filter-repo --replace-text` pass rewrote ALL history (main included: raw `100 .99.88.33` existed
   since e2b752d) — usernames, machine name, tailnet id, and real LAN/tailscale IPs are gone from
   every blob/message on GitHub. GIF/video frames intentionally keep original pixels (owner OK).
+- **2026-10-27 (lat/lng blur)** — diagnostics shot showed the owner's REAL GPS fix (values live on,
+  untracked — do NOT record them here; that's the whole point) — tesseract `\d\.\d{3,}` sweep missed
+  it: the `lat=` prefix breaks the token regex, scan for `lat[=: ]?-?[0-9]+\.[0-9]+` instead. Values mosaic-blurred (labels `location: fix ok ·
+  lat=` kept), re-masked, claim re-gated PASS. README caption rewritten (no "redacted here" prose —
+  pixels just are). History: all prior generations of this PNG replaced with the blurred bytes via
+  filter-repo blob-callback.
