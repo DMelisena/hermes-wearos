@@ -156,6 +156,9 @@ adb shell settings put global enable_display_offload 0 # else screencap returns 
 | Notification list | from the WATCH FACE: swipe **left→right** (tiles panel ≠ notifications; `cmd statusbar expand-notifications` only opens tiles) |
 | Notification actions | tap the card once → expands inline (Approve/Deny); posting must be FRESH-UNREAD (`notify_demo` posts a new id each time) or OneUI won't front the drawer |
 | Anything clickable | uiautomator dump bounds = ground truth; scaled-screenshot guesses miss |
+| A markdown link inside chat text | uiautomator lies for scaled/scrolling compose text — instead run **blue-pixel forensics on the screencap itself** (screencap is 480×480 = device pixels, 1:1 with `input tap`): LinkBlue `0xFF8AB4F8` glyph clusters + their underline runs mark the exact link box; tap its center. Tapping your OWN message chip opens the Edit & resend sheet (useful for S16, annoying mid-link-hunt). |
+
+**watchkit mermaid broke overnight = npx auto-update pulled a mermaid-cli whose puppeteer wants a newer `chrome-headless-shell` than `.cache/puppeteer` holds (an empty stub dir masks the link). Fix without duplicating storage: symlink the version from `~/.cache/puppeteer/chrome-headless-shell/` into `server/watchkit/.cache/puppeteer/chrome-headless-shell/` and re-POST `/render/mermaid`.**
 
 **Screenshot hygiene (every shot):**
 
@@ -239,6 +242,11 @@ media path.
 
 ## 10. Feature changelog (append when a feature lands)
 
+- **2026-10-26 `cbbaf4d`** — white reply text restored (foundation ClickableText never consults
+  the theme's content color — MdBodyText now resolves it; the links round had shipped black-on-
+  black body copy, so **every chat-reply screenshot must be from a build ≥ cbbaf4d**); notifications
+  gained an **Open session** action that lands the notice's own chat, switching agents first when
+  needed (`notify_demo -e notify_chat <id>` aims the demo card at any session — the A6 beat uses it).
 - **2026-10-26 `39f770b`** — orb-spirit notification icon (+ color largeIcon),
   ⚙ settings lane at 3:00, `notify_demo` hook → ledger rows 22, 23 + new S30–S34.
 - (next feature updates §2 + README §3 rows in the SAME commit)
