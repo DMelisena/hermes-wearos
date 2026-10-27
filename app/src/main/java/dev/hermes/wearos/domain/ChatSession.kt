@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Request
 import okhttp3.sse.EventSource
@@ -127,6 +128,69 @@ class ChatSession(
     private suspend fun apiTo(baseUrl: String): HermesApi =
         HermesApi(baseUrl, settings.tokenFor(settings.profileSync()), http)
 
+    // ── MODEL PICKER (SPEC §12.7) ────────────────────────────────────────────────────────────
+    // Owner: swap the never-used notes lane for a model selector. Semantics that fall out of the
+    // gateway (all verified live against 0.21.7): the run body's `model` routes the run AND the
+    // gateway stamps the session column with whatever it served, so (a) picking a model here just
+    // resends it on every ask for this chat, (b) adopted/continued sessions KEEP their last-served
+    // model by adopting the stamped column when the chat is opened, and (c) new sessions with no
+    // stamp and no pick ride the profile default. The session `POST /model` LOCK endpoint is NOT
+    // used: /v1/runs ignores it (only /api/sessions/{id}/chat honors it) — verified by running a
+    // locked session and watching `runtime.model` come back unchanged.
+
+    data class ModelState(
+        val loading: Boolean = false,
+        val error: String = "",
+        val catalog: ModelCatalog.Catalog? = null,
+        /** What THIS chat will run on ("" = gateway default). Mirrors ChatMeta.model. */
+        val picked: String = "",
+    )
+
+    private val _modelState = MutableStateFlow(ModelState())
+    val modelState: StateFlow<ModelState> = _modelState
+
+    /** Open the 🧠 lane: refresh picker state from cache/gateway (catalog is per-agent+endpoint). */
+    fun refreshModels(force: Boolean = false) {
+        _modelState.value = _modelState.value.copy(loading = true, error = "", picked = pickedModel())
+        scope.launch {
+            try {
+                val cat = withContext(Dispatchers.IO) { ModelCatalog.load(api(), force) }
+                _modelState.value = ModelState(catalog = cat, picked = pickedModel())
+            } catch (e: Exception) {
+                _modelState.value = _modelState.value.copy(loading = false, error = explain(e))
+            }
+        }
+    }
+
+    fun pickedModel(): String = activeId.takeIf { it.isNotEmpty() }?.let { store.get(it)?.model } ?: ""
+
+    /** Remember the pick for this chat ("" = back to gateway default). Selection is local-fast;
+     *  it takes effect on the NEXT ask — the running turn keeps its model, like the gateway itself. */
+    fun pickModel(model: String) {
+        if (activeId.isEmpty()) return
+        store.update(activeId) { it.copy(model = model, updatedAt = System.currentTimeMillis()) }
+        _modelState.value = _modelState.value.copy(picked = model)
+        Log.i("HermesWear", "model picked chat=$activeId model=${model.ifBlank { "gateway default" }}")
+    }
+
+    /**
+     * MODEL CONTINUITY on chat entry (owner: "if we're already using a model … keep using it"):
+     * a chat with no local pick inherits the gateway's stamped model — adopted sessions, desktop
+     * sessions, other devices. A dead/404 read just means "nothing stamped yet → default".
+     */
+    private fun adoptSessionModel(meta: ChatMeta) {
+        if (meta.model.isNotEmpty() || meta.sessionTitle.isBlank()) return
+        scope.launch {
+            try {
+                val stamped = withContext(Dispatchers.IO) { api().sessionModel(meta.sessionTitle) }
+                if (!stamped.isNullOrBlank() && store.get(meta.id)?.model.isNullOrEmpty()) {
+                    store.update(meta.id) { it.copy(model = stamped) }
+                    Log.i("HermesWear", "model adopted chat=${meta.id} model=$stamped")
+                }
+            } catch (e: Exception) { /* default answers; nothing to log loudly about */ }
+        }
+    }
+
     /**
      * Turn a raw failure into something a wrist can act on. The one that mattered (SPEC §12.2):
      * a 401 on a multiplexed gateway usually means THIS agent has no `API_SERVER_KEY` on the box —
@@ -202,6 +266,8 @@ class ChatSession(
         gen++
         // Opening a chat acknowledges it: cancel its notifications + attention flag (M5).
         Notifs.cancelChat(app, meta.id, meta.lastRunId)
+        adoptSessionModel(meta) // SPEC §12.7: un-picked chats keep the model their last turn used
+        _modelState.value = ModelState(picked = meta.model) // picker always opens on THIS chat's pick
         RunWakeLock.release("chat switch → ${meta.id}") // re-acquired by resumeRun if a run lives here
         store.update(meta.id) { it.copy(pendingAttention = false) }
         _state.value = ChatUiState(
@@ -324,10 +390,14 @@ class ChatSession(
                 // at worst one 2.5 s probe when the 5-min revalidation / primary-backoff is due.
                 runCatching { if (WearApp.Graph.hasEndpoints()) WearApp.Graph.endpoints.ensure(false) }
                 val a = api()
-                val session = store.get(activeId)!!.sessionTitle
+                val metaNow = store.get(activeId)!!
+                val session = metaNow.sessionTitle
+                // Per-chat model (SPEC §12.7): "" = never picked → the virtual alias rides the
+                // gateway default. A picked id routes every turn of this chat on the gateway.
+                val modelSel = metaNow.model.ifBlank { HermesApi.VIRTUAL_MODEL }
                 val idem = UUID.randomUUID().toString()
                 val accepted = try {
-                    a.submitRun(trimmed, session, idem)
+                    a.submitRun(trimmed, session, idem, modelSel)
                 } catch (e: Exception) {
                     // Endpoint failover (SPEC §11): the winner just died mid-session? Advance to
                     // the gateway's next endpoint BEFORE retrying; the Idempotency-Key makes the
@@ -335,7 +405,7 @@ class ChatSession(
                     Log.w(TAG, "submit failed (${e.message}) — endpoint failover check")
                     val nextBase = advanceEndpoint(a.baseUrl)
                     val retryApi = nextBase?.let { apiTo(it) } ?: run { delay(1_500); a }
-                    retryApi.submitRun(trimmed, session, idem)
+                    retryApi.submitRun(trimmed, session, idem, modelSel)
                 }
                 store.update(activeId) { it.copy(lastRunId = accepted.runId, updatedAt = System.currentTimeMillis()) }
                 settings.setLastRun(accepted.runId) // legacy key: pre-registry resume path (migration source)

@@ -107,6 +107,13 @@ class WearApp : Application() {
          */
         val devDialPreview = MutableStateFlow(false)
 
+        /**
+         * Dev hook `-e model_picker`: opens the 🧠 MODEL PICKER on the active chat — same reason
+         * dial_preview exists: a synthetic dial release is flaky to script, and the picker needs
+         * gateway round-trips a screenshot pass wants to wait on.
+         */
+        val devModelPicker = MutableStateFlow(false)
+
         /** Dev hook `-e search <q>`: types a query into the Sessions search the way a thumb
          *  would (adb `input text` can't traverse the Wear IME), then one-shot clears itself. */
         val devSearchQuery = MutableStateFlow<String?>(null)

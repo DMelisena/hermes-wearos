@@ -44,7 +44,7 @@ class OrbDialTest {
     @Test fun `the default map is the owner's clock face`() {
         assertEquals(
             listOf(
-                Lane.Keyboard, Lane.Mute, Lane.RecordHi, Lane.VoiceNotes,
+                Lane.Keyboard, Lane.Mute, Lane.RecordHi, Lane.Model,
                 Lane.Commands, Lane.Chats, Lane.Sessions, Lane.Agents,
             ),
             slots,
@@ -58,7 +58,7 @@ class OrbDialTest {
         assertEquals(Lane.Keyboard, laneAt(0f))     // up: the drag-up that already shipped
         assertEquals(Lane.Mute, laneAt(45f))        // 1:30
         assertEquals(Lane.RecordHi, laneAt(90f))    // 3:00
-        assertEquals(Lane.VoiceNotes, laneAt(135f)) // 4:30
+        assertEquals(Lane.Model, laneAt(135f)) // 4:30
         assertEquals(Lane.Commands, laneAt(180f))   // straight down
         assertEquals(Lane.Chats, laneAt(225f))      // 7:30
         assertEquals(Lane.Sessions, laneAt(270f))   // straight left
@@ -67,7 +67,7 @@ class OrbDialTest {
 
     @Test fun `wedges own the slop - every direction inside a wedge keeps its lane`() {
         for ((clock, lane) in listOf(
-            0f to Lane.Keyboard, 45f to Lane.Mute, 90f to Lane.RecordHi, 135f to Lane.VoiceNotes,
+            0f to Lane.Keyboard, 45f to Lane.Mute, 90f to Lane.RecordHi, 135f to Lane.Model,
             180f to Lane.Commands, 225f to Lane.Chats, 270f to Lane.Sessions, 315f to Lane.Agents,
         )) {
             for (off in listOf(-18f, -8f, 8f, 18f)) {
@@ -170,13 +170,13 @@ class OrbDialTest {
 
     @Test fun `map round-trips through the persisted string`() {
         val raw = OrbDial.encode(slots)
-        assertEquals("keyboard,mute,record_hi,voice_notes,commands,chats,sessions,agents", raw)
+        assertEquals("keyboard,mute,record_hi,model,commands,chats,sessions,agents", raw)
         assertEquals(slots, OrbDial.decode(raw))
     }
 
     @Test fun `owner remap changes only the lane, not the geometry`() {
         val remapped = listOf(
-            Lane.Keyboard, Lane.VoiceNotes, Lane.Agents, Lane.None,
+            Lane.Keyboard, Lane.Model, Lane.Agents, Lane.None,
             Lane.Sessions, Lane.Chats, Lane.RecordHi, Lane.Mute,
         )
         assertEquals(Lane.Mute, OrbDial.laneAt(remapped, vec(315f).first, vec(315f).second, scale)) // 10:30 now mutes
@@ -201,7 +201,7 @@ class OrbDialTest {
         assertEquals(Lane.Keyboard, mixed[0])
         assertEquals(Lane.Mute, mixed[1])
         assertEquals(Lane.RecordHi, mixed[2])
-        assertEquals(Lane.VoiceNotes, mixed[3]) // missing tail → defaults, still 8 long
+        assertEquals(Lane.Model, mixed[3]) // missing tail → defaults, still 8 long
         assertEquals(8, mixed.size)
     }
 
@@ -216,11 +216,22 @@ class OrbDialTest {
 
     @Test fun `lane ids are stable settings vocabulary`() {
         listOf(
-            "none", "keyboard", "mute", "record_hi", "voice_notes",
+            "none", "keyboard", "mute", "record_hi", "model",
             "commands", "chats", "sessions", "agents",
         ).forEach { assertNotNull(it, Lane.fromId(it)) }
         assertNull(Lane.fromId("teleport"))
         assertNull(Lane.fromId(""))
+        // The notes lane is RETIRED vocabulary (SPEC §12.7: 📝 nobody used → 🧠 model selector).
+        assertNull(Lane.fromId("voice_notes"))
+    }
+
+    @Test fun `a pre-model-save with voice_notes at 430 migrates to the model lane`() {
+        // Owners who never touched the dial carry "…,voice_notes,…" in DataStore. Unknown id →
+        // that slot takes its DEFAULT, which is now Lane.Model — silent one-lane migration.
+        val legacy = OrbDial.decode("keyboard,mute,record_hi,voice_notes,commands,chats,sessions,agents")
+        assertEquals(Lane.Model, legacy[3])
+        assertEquals(Lane.Keyboard, legacy[0])
+        assertEquals(Lane.Agents, legacy[7])
     }
 
     @Test fun `clock labels survive the wrap`() {

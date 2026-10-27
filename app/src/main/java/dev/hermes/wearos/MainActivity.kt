@@ -69,6 +69,7 @@ import androidx.wear.compose.material.SwipeToDismissBox
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 import dev.hermes.wearos.ui.AgentPickerDialog
+import dev.hermes.wearos.ui.ModelPickerDialog
 import dev.hermes.wearos.ui.ChatScreen
 import dev.hermes.wearos.ui.ChatsScreen
 import dev.hermes.wearos.ui.LocalFontScale
@@ -159,6 +160,7 @@ class MainActivity : ComponentActivity() {
                 var composing by remember { mutableStateOf(false) }
                 var draft by remember { mutableStateOf("") }
                 var showAgents by remember { mutableStateOf(false) }
+                var showModels by remember { mutableStateOf(false) }
                 var sessionFilter by remember { mutableStateOf(GatewaySessions.FILTER_ALL) }
                 // 🗃 chip auto-exits when its last row was unarchived (an empty chip would strand
                 // the user on an empty list they can see is empty).
@@ -462,7 +464,13 @@ class MainActivity : ComponentActivity() {
                         }
                         Lane.Mute -> speak.setVoiceEnabled(!voiceOut)
                         Lane.RecordHi -> sttStatus.value = "record→pc STT: branch 2 (§13.4)"
-                        Lane.VoiceNotes -> sttStatus.value = "voice-note ring: branch 2 (§13.4)"
+                        // 🧠 the model lane (owner: notes nobody used → "make that the model
+                        // selector"). Always lands on the chat first: the pick is per-chat.
+                        Lane.Model -> {
+                            screen = Screen.Chat
+                            showModels = true
+                            session.refreshModels()
+                        }
                         Lane.Commands -> openCommands(null)
                         Lane.Chats -> screen = Screen.Chats
                         Lane.Sessions -> screen = Screen.Sessions
@@ -658,6 +666,16 @@ class MainActivity : ComponentActivity() {
                 // Dev hook `-e viewer_demo [scale]`: the MEDIA VIEWER over a generated test card —
                 // the sub-fit zoom-out proof (d3) over adb without a live gateway image.
                 val devViewerScale by WearApp.Graph.devViewerScale.collectAsState()
+                // `-e model_picker`: open the 🧠 model picker exactly like a lane release would.
+                val devModelPicker by WearApp.Graph.devModelPicker.collectAsState()
+                LaunchedEffect(devModelPicker) {
+                    if (devModelPicker) {
+                        WearApp.Graph.devModelPicker.value = false
+                        screen = Screen.Chat
+                        showModels = true
+                        session.refreshModels()
+                    }
+                }
                 // THE BACK BUTTON NEVER QUITS (owner batch 5: "hitting the back button from the
                 // keyboard exits Hermes — it needs to go back to the previous screen ALWAYS"):
                 // whatever is open on top closes first, topmost layer wins. Composed AFTER the
@@ -665,13 +683,15 @@ class MainActivity : ComponentActivity() {
                 // winner; with nothing open it disables and Sessions/Settings keep their
                 // → Chat handler, and Chat keeps the plain system default (leaving is the exit).
                 val overlayOpen = editor != null || promptSheet != null || manageSheet != null ||
-                    confirmDelete != null || showAgents || commandsOpen || devViewerScale != null
+                    confirmDelete != null || showAgents || showModels || commandsOpen || devViewerScale != null
                 androidx.activity.compose.BackHandler(enabled = overlayOpen) {
                     when {
                         editor != null -> editor = null
                         promptSheet != null -> promptSheet = null
                         confirmDelete != null -> confirmDelete = null
                         manageSheet != null -> manageSheet = null
+                        // Model picker closes onto the chat (same contract as Agents).
+                        showModels -> { showModels = false; screen = Screen.Chat }
                         // Agents closes ONTO CHAT (back ring, batch 6): from the ring it is the
                         // Agents→Chat leg; from a dial open it simply goes home to the chat.
                         showAgents -> { showAgents = false; screen = Screen.Chat }
@@ -733,6 +753,30 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onDismiss = { showAgents = false; screen = Screen.Chat },
+                    )
+                }
+                if (showModels) {
+                    val modelState by session.modelState.collectAsState()
+                    ModelPickerDialog(
+                        picked = modelState.picked,
+                        defaultModel = modelState.catalog?.defaultModel ?: "",
+                        groups = modelState.catalog?.groups ?: emptyList(),
+                        loading = modelState.loading,
+                        error = modelState.error,
+                        agent = profile,
+                        onPick = { m ->
+                            session.pickModel(m)
+                            showModels = false
+                            WearApp.Graph.runOnUi {
+                                Toast.makeText(
+                                    context,
+                                    if (m.isEmpty()) "🌐 gateway default — this chat"
+                                    else "🧠 ${m.substringAfterLast('/')} — this chat",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        onDismiss = { showModels = false; screen = Screen.Chat },
                     )
                 }
                 promptSheet?.let { msg ->

@@ -24,6 +24,8 @@ import kotlinx.coroutines.launch
  *  -e fontscale <1.4|reset> (persist+apply pinch font-scale without fingers),
  *  -e viewer_demo [scale] (open the media viewer on a generated card — sub-fit zoom proof;
  *  scale like 0.5 opens BELOW fit directly, 0/false closes).
+ *  -e model_picker (open the 🧠 model picker on the active chat — the SPEC §12.7 lane without a
+ *  flaky synthetic dial release; waits on the gateway catalog round-trip itself).
  *  Gateway-epic additions: -e gw_dump, -e gw_probe, -e gw_select <id>.
  *  Dial-epic additions (SPEC §12-13): -e render [list|tables|wide|mermaid|pdf|link|media|all]
  *  (inject a canned answer that exercises the media surfaces — no gateway, no model),
@@ -194,6 +196,8 @@ class DevAskReceiver : BroadcastReceiver() {
         }
         // DIAL PREVIEW: pins the ring open ~8 s for a screenshot (adb can't hold a drag mid-stroke).
         if (intent?.hasExtra("dial_preview") == true) { WearApp.Graph.devDialPreview.value = true; return }
+        // MODEL PICKER PIN (`-e model_picker`): opens the 🧠 picker like a lane release would.
+        if (intent?.hasExtra("model_picker") == true) { WearApp.Graph.devModelPicker.value = true; return }
         // SEARCH AS A THUMB TYPES (`-e search haiku`) — adb input text can't traverse the Wear IME.
         intent?.getStringExtra("search")?.let { WearApp.Graph.devSearchQuery.value = it; return }
         // CATCH UP THE OPEN CHAT (`-e catchup go`) — same door the pull-up gesture uses.

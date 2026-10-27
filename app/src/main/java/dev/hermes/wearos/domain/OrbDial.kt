@@ -11,15 +11,20 @@ import kotlin.math.sqrt
  * `id` is what persists in DataStore (`OrbDial.encode/decode`), `glyph` is what the ring draws,
  * `label` is what the Settings ▸ Orb rows and the highlight caption say.
  *
- * `None` is a real choice, not a gap: an owner who keeps opening `notes` by accident can blank a
+ * `None` is a real choice, not a gap: an owner who keeps opening `model` by accident can blank a
  * direction, and a blank direction releases to nothing (it does NOT fall back to the tap).
+ *
+ * The 4:30 lane used to be `voice_notes` (a §13.4 branch-2 stub nobody ever fired). The owner's
+ * take: "I've never used the notes — make that the model selector". Old saves still carry
+ * `voice_notes`; [OrbDial.decode] treats it as an unknown id and hands that slot the new default,
+ * which is exactly the migration we want.
  */
 enum class Lane(val id: String, val glyph: String, val label: String) {
     None("none", "·", "off"),
     Keyboard("keyboard", "⌨", "keyboard"),
     Mute("mute", "🔊", "mute"),
     RecordHi("record_hi", "🎙", "record"),
-    VoiceNotes("voice_notes", "📝", "notes"),
+    Model("model", "🧠", "model"),
     Commands("commands", "⌘", "commands"),
     Chats("chats", "💬", "chats"),
     Sessions("sessions", "≡", "sessions"),
@@ -95,7 +100,7 @@ object OrbDial {
 
     /** Owner's default map, slot 0 → slot 7 (12:00 → 10:30 clockwise), SPEC §12.1. */
     val DEFAULT_SLOTS: List<Lane> = listOf(
-        Lane.Keyboard, Lane.Mute, Lane.RecordHi, Lane.VoiceNotes,
+        Lane.Keyboard, Lane.Mute, Lane.RecordHi, Lane.Model,
         Lane.Commands, Lane.Chats, Lane.Sessions, Lane.Agents,
     )
 

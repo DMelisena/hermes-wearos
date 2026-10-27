@@ -1,5 +1,6 @@
 package dev.hermes.wearos.net
 
+import dev.hermes.wearos.domain.ModelCatalog
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -32,6 +33,8 @@ class HermesApi(
     companion object {
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
         private val Json_ = Json { ignoreUnknownKeys = true }
+        /** The gateway's virtual model alias = "serve this profile's configured default". */
+        const val VIRTUAL_MODEL = "hermes-agent"
         val DEFAULT = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)   // SSE: rely on server keepalive
@@ -69,9 +72,14 @@ class HermesApi(
 
     data class RunAccepted(val runId: String, val status: String, val replayed: Boolean)
 
-    /** Durably idempotent: retrying with the same [idempotencyKey] never starts a second run. */
-    fun submitRun(input: String, sessionId: String, idempotencyKey: String): RunAccepted {
-        val body = "{\"input\":${esc(input)},\"session_id\":${esc(sessionId)},\"model\":\"hermes-agent\"}"
+    /**
+     * Durably idempotent: retrying with the same [idempotencyKey] never starts a second run.
+     * [model] is the per-session pick (SPEC §12.7) — the literal `"hermes-agent"` virtual alias
+     * means "whatever this profile defaults to", anything else routes the run on the gateway
+     * (`_resolve_route` / requested-model, verified live: `runtime.model` comes back as asked).
+     */
+    fun submitRun(input: String, sessionId: String, idempotencyKey: String, model: String = VIRTUAL_MODEL): RunAccepted {
+        val body = "{\"input\":${esc(input)},\"session_id\":${esc(sessionId)},\"model\":${esc(model)}}"
         client.newCall(request("$baseUrl/v1/runs", body, mapOf("Idempotency-Key" to idempotencyKey))).execute().use { r ->
             val text = r.body?.string().orEmpty()
             if (!r.isSuccessful) throw ApiException(r.code, "run submit ${r.code}: ${text.take(160)}")
@@ -94,6 +102,40 @@ class HermesApi(
 
     fun eventsUrl(runId: String) = "$baseUrl/v1/runs/$runId/events"
     fun authHeader(): Pair<String, String> = "Authorization" to "Bearer $token"
+
+    /**
+     * MODEL PICKER inventory (SPEC §12.7): GET /api/model/options → providers catalog. The
+     * gateway advertises this via `model_options` in /v1/capabilities; "enabled on this gateway"
+     * means the provider is authenticated AND lists models (the dashboard/TUI picker rule).
+     * Parsing/filtering lives in [ModelCatalog]; throws on any transport/HTTP failure.
+     */
+    fun modelOptions(): ModelCatalog.Catalog {
+        client.newCall(request("$baseUrl/api/model/options")).execute().use { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw ApiException(r.code, "model options ${r.code}: ${text.take(120)}")
+            return ModelCatalog.parse(parse(text))
+        }
+    }
+
+    /**
+     * The model THIS session last ran on: GET /api/sessions/{id} → `session.model`. The gateway
+     * stamps the column with every served model (verified live), so an adopted or multi-device
+     * session keeps answering on the model its last turn used. 404 (fresh session) or no column →
+     * null = "gateway default, nothing picked yet".
+     */
+    fun sessionModel(sessionId: String): String? {
+        return try {
+            client.newCall(request("$baseUrl/api/sessions/${java.net.URLEncoder.encode(sessionId, "UTF-8")}"))
+                .execute().use { r ->
+                    if (!r.isSuccessful) return null
+                    val obj = parse(r.body?.string().orEmpty())
+                    val session = obj["session"] as? JsonObject ?: obj
+                    session.str("model")?.takeIf { it != VIRTUAL_MODEL }
+                }
+        } catch (e: Exception) {
+            null // model continuity is a nice-to-have; a dead read must never sink the chat open
+        }
+    }
 
     /**
      * Gateway health probe (Settings "Test"). Verified: GET /v1/health → 200
