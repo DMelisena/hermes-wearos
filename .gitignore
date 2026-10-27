@@ -28,3 +28,6 @@ keystore.properties
 # watchkit runtime state (latest body snapshot — machine-local, not source)
 server/watchkit/.state/
 tmp-shots/
+
+# vertical film master: generated locally, published on YouTube (not tracked)
+docs/demo/*.mp4

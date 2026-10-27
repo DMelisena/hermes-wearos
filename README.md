@@ -13,16 +13,26 @@ The whole app is ~1 MB of Kotlin + a zero-dependency Node helper on the server s
 *Works with any [Hermes](https://github.com/borealBytes) gateway exposing its API server; the watch
 needs nothing but HTTP on your LAN or tailnet.*
 
+**Round-first — that's why every image here is a circle.** We mask screenshots to a circle because
+that is exactly what the owner's Galaxy Watch shows. Under the mask the app renders a normal
+480×480 Wear OS framebuffer; the round glass simply never shows those corners. On a square Wear OS
+screen those corner pixels are real pixels you'll actually get — you see *more* than these
+screenshots, never less — while the layout was designed for the circle from the first pass, so
+nothing important ever lived in a corner anyway. This app is built and tuned on Galaxy Watch
+(Wear OS 5, min SDK 30): everything in it travels to other Wear OS watches except the optional
+body-sensor tools, which ride Health Services — a capability Samsung watches provide and others
+don't; elsewhere the app reports "health services: unavailable" on its own diagnostics screen and
+carries on. Expect small per-OEM tweaks for non-Samsung watches (IME and notification-shade
+mannerisms); a OnePlus Watch is next on the test bench.
+
 <p align="center">
-  <a href="docs/demo/demo-vertical.mp4"><img src="docs/demo/demo-walkthrough.gif" width="200" alt="Animated walkthrough: voice ask, streaming answer, the weather plot, the diagram, an approval tap — every feature at real wrist speed"/></a><br/>
-  <sub><a href="docs/demo/demo-vertical.mp4">▶ full vertical tour (1080×1920, silent master)</a> — every
-  feature at real wrist speed, captured live off a Galaxy Watch with no edits to the answers; the owner's
-  agent adds the score once the picture is approved.</sub><br/>
+  <a href="https://youtu.be/Cd4Y_ESQoQ0"><img src="docs/demo/demo-walkthrough.gif" width="480" alt="Animated walkthrough: voice ask, streaming answer, the weather plot, the diagram, an approval tap — every feature at real wrist speed"/></a><br/>
+  <sub>Click the strip for the <a href="https://youtu.be/Cd4Y_ESQoQ0">▶ full vertical tour</a> — 3:35,
+  1080×1920, with a score by the owner's agent. Every feature at real wrist speed, captured live off a
+  Galaxy Watch with no edits to the answers.</sub><br/>
   <sub>Splash art: <a href="docs/art-selfportrait.webp">her self-portrait</a> — engraved by the on-gateway
   image agent from its own idea of itself; it flashes for a beat on cold start, then gets out of your way.</sub>
 </p>
-
-![Hermes Wear OS — full feature tour, silent master](docs/demo/demo-vertical.mp4)
 
 <br clear="all"/>
 
@@ -244,9 +254,9 @@ Every knob is on-device, and there are no hidden ones:
 | | |
 |---|---|
 | <img src="docs/screens/17-agent-picker.png" width="180"/> | <img src="docs/screens/19-settings-display.png" width="180"/> |
-| **Agent switcher** — every profile your gateway serves, one per row, on one tap: persona, tools, session space, and base URL swap together. Each profile's gateway key is **learned automatically** (watchkit reads the profiles' `.env`s — the key matrix under Gateways shows ✓ per agent), and one shared `API_SERVER_KEY` across profiles = one login for the whole gateway. | **Display settings** — markdown toggle, pinch-text scale with its live multiplier and `reset`, and the orb dial's eight directions, each remappable by tapping its row. |
+| **Agent switcher** — every profile your gateway serves, one per row, on one tap: persona, tools, session space, and base URL swap together. Each profile's gateway key is **learned automatically** (watchkit reads the profiles' `.env`s — the key matrix under Gateways shows ✓ per agent), and one shared `API_SERVER_KEY` across profiles = one login for the whole gateway. | **Display settings** — markdown toggle, pinch-text scale with its live multiplier, and the orb dial's directions right in the list: tap any row to remap that direction. |
 | <img src="docs/screens/20-settings-connection.png" width="180"/> | <img src="docs/screens/13-launcher-icon.png" width="180"/> |
-| **Connection editor** — the active profile's base URL + gateway token (redacted here for the screenshot), with a live **Test** button; watchkit config lives right beside it. | **Nothing to install on the phone** — the whole assistant is one icon on the watch's app grid. |
+| **Connection editor** — the active profile's base URL + gateway token (redacted here for the screenshot) with **Save** and a live **Test** button. | **Nothing to install on the phone** — the whole assistant is one icon on the watch's app grid. |
 
 The diagnostics screen is the support story: STT model present ✅, TTS engine ready, last push status
 with bytes and age, health-services availability, location fix state. Location is redacted here for

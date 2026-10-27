@@ -114,7 +114,7 @@ live in `docs/screens/` and all re-shoots keep the existing filename.
 |---|---|---|---|
 | hero `dial-orb-vertical-v2.mp4` | **RETIRED** → one combined film `demo-vertical.mp4` at top, inline `![](…mp4)` embed | NEW caption: full feature story, silent note | refreshed |
 | `orb-dial.gif` | **RETIRED** (dial act lives in the film) | — | refreshed |
-| `01-orb-cluster.png` | re-shot | yes — 3:00 row now ⚙ (lane table already updated @39f770b) | refreshed |
+| `01-orb-cluster.png` | re-shot (owner: empty-session minimalism — new chat, Ask Hermes + popped orb cluster, no chat content) | yes — 3:00 row ⚙ in shot | refreshed |
 | `02-chat-markdown.png` | re-shot | keep claim | refreshed |
 | `02b-chat-table.png` | re-shot | keep claim | refreshed |
 | `03-image-card.png` | re-shot | YES → weather-plot wording | refreshed |
@@ -162,6 +162,9 @@ adb shell settings put global enable_display_offload 0 # else screencap returns 
 
 **Screenshot hygiene (every shot):**
 
+- docs/screens ships the **circle-masked** generation (owner directive: round-first — the mask is
+  exactly what the round watch physically shows; square originals live in `tmp-shots/screens-square/`
+  for re-shoots and forensics). Re-shoots: capture square → redact → mask → gate.
 - NEVER reuse a filename between live captures (this round re-learned it the hard way: a later
   capture overwrote `C-20-connection.png`, silently mis-filing a Display-section frame as the
   Settings-home candidate — the vision gate caught what the eye skipped). — harness/viewer caches make a
@@ -179,6 +182,17 @@ adb shell settings put global enable_display_offload 0 # else screencap returns 
 - OneUI search traps: entering Sessions auto-focuses search (IME toolbar shifts every hit target
   +60px); the toolbar ✕ pops to home; `screen` injections are ignored while the Agents modal is
   up; tap rows by uiautomator bounds only.
+- **screenrecord discipline**: NEVER `pkill screenrecord` (moov never written → whole take is
+  garbage; let `--time-limit` expire, then wait ~5 s, then pull). Keep `svc power stayon true` +
+  `dumpsys deviceidle disable` — a screen timeout mid-take truncates the recording too (a 100 s
+  take died at 60 s when the display slept; stay-on only holds while tethered/charging).
+- **Watch stop-orb**: during an active run the red circle + white square at bottom-center is the
+  STOP button — tapping it to dismiss "an overlay" silently cancels the run. While it's up the
+  chat's lower controls can also swallow taps (in-session Approve taps missed twice; the
+  `-e approve` hook resolves via the same path the button uses — fine for film, honest in log).
+- Blur redaction must be measured, not guessed: locate value text rows by brightness-band scan
+  (rows with >8 bright px in the field box), blur THAT strip ±6 px. Two rounds shipped with
+  hand-placed bands that covered Save/Test while leaving the token readable (owner caught it).
 - Vision review (sglang endpoint, T=0, ONE claim per pass, scan `content` +
   `reasoning_content`) against the exact README caption → `shot ✓`.
 
@@ -227,11 +241,41 @@ commas inside `between(t\,a\,b)`; `pkill` zombie ffmpeg before retry.
 
 ## 7. Assembly (Phase 4)
 
-Legacy pipeline: `/tmp/opencode/vidframes/assemble-v.sh` (black-bar + plain
-drawtext — superseded). New: per-beat segments (zoomed captures or live-recorded
-takes) → composite on art canvas → circle float → caption pills → silent
-master `demo-vertical.mp4` (h264, no audio track) + per-beat keyframes for §3
-screens where a still can come from a take.
+Pipeline (scripts live in `/tmp/opencode/` — copy to `tools/demo/` before they burn in a reboot):
+`canvas_build.py` (harbor canvas + masks + pills) → `assemble.py` (beat cut list → segments →
+concat) → final medium/crf24 re-encode → `gif_build.py` (walkthrough keyframes → palette GIF).
+
+**Owner-approved design (2026-10-27, keep unless overridden):**
+- Art canvas: agent self-portrait harbor plate (`comfyui state demo-art/draft-1`), cover-cropped
+  1080×1920, dimmed to 0.82, vignette. Cobalt (#3C63DD) ring + caption pills in
+  RulesGothicCnd-Light caps ( Nous brand fonts, converted woff2→ttf via fontTools, kept in
+  `../devkit/demo/fonts/` — trial fonts, never commit).
+- Watch circle = **760 px (70 % of canvas width)** at (160, 280) — owner: "640 was too small".
+  Clip is a plain 480×480 screencap → alpha-masked to the circle; mask is TRANSPARENT outside
+  (not white) with a ~2 px white screen-edge ring + faint halo so it reads as watch glass on any
+  background.
+- Caption pills y≈1150, cobalt outline, ink #0B0B14 @ 80 %.
+- **The circle is NEVER empty** (owner, 2026-10-27): any beat without a capture fills the watch
+  circle with the splash art (`tools/demo/art/hermes-watch-splash.png`, circle-masked in
+  `canvas_build.py` → `splash_circle.png`, overlaid at 164:284 so the white edge ring survives).
+  Hero and end cards run on it.
+- **Beat arcs are LONG on purpose** (owner: "more demo per step — show the best parts"): every
+  feature beat shows the whole arc — action → stream → result. "Long" means LONG ON CONTENT,
+  not long in wall-clock: place the window on the motion (timeline forensics, §4) so every
+  second shows something moving — 6–24 s per beat, silent master 3:37. Dead air reads broken;
+  an arc packed with motion reads like proof even at 6 s.
+- Hero/end cards: wordmark over the canvas + empty circle ("your watch, waiting").
+
+**ffmpeg traps this pipeline hits (all fixed in the scripts — do not regress):**
+- Watch screenrecord raws are ~5 fps VFR with sparse keyframes: input-side `-ss` is KEYFRAME-COARSE
+  and silently shifts beats — use `trim=start:end,setpts=PTS-STARTPTS` in the graph (exact).
+- PNG overlays need `-loop 1` (repeatlast alone makes them one frame → hero collapses); cap the
+  loop with input `-t` AND output `-frames:v` or the muxer never closes (the classic hang).
+- Encoding: CPU `libx264 -preset ultrafast` per segment + `medium -crf 24` final is fine
+  (~1 min for 3:37). GPU: ffmpeg here needs driver ≥ 610 for NVENC API 13.1 (box has 580 + a
+  4070 AND a Blackwell PRO 6000 — after a driver upgrade flip the codec line in `assemble.py`
+  to `h264_nvenc -preset p4 -rc vbr -cq 23` and the final encode drops to seconds).
+- GIF: extract keyframes with OUTPUT-side `-ss` only; input-side `-ss` lands on the wrong keyframe.
 
 ## 8. Verification gates (all must pass before push)
 
@@ -247,13 +291,52 @@ screens where a still can come from a take.
 
 ## 9. History invariant (after every media round)
 
-Commit new media → `git filter-branch` `git rm --cached` over the old blobs
-(`origin/main..HEAD`) → restore from `refs/original` → single
-`media: current generation` commit → `git gc --prune=now` →
-`git push --force-with-lease`. Branch keeps exactly ONE generation of every
-media path.
+**Tracked media = `docs/screens/*.png` + `docs/demo/demo-walkthrough.gif`. The mp4 master is NOT
+tracked** (`docs/demo/*.mp4` gitignored; it regenerates via `tools/demo/` and lives locally,
+published on YouTube — README links, never embeds, the mp4).
+
+For tracked media: commit new → `git filter-branch --index-filter "git rm -r --cached
+--ignore-unmatch <paths>"` over `origin/main..HEAD` (NOTE: the tree must be CLEAN or
+filter-branch silently no-ops; and `[ "$x" != "$KEEP*" ]` never globs inside `[ ]` — exact
+strings only) → restore from `refs/original` on any botched pass → single
+`media: current generation` commit → `git gc --prune=now` → `git push --force-with-lease`.
+Branch keeps exactly ONE generation of every tracked media path.
 
 ## 10. Feature changelog (append when a feature lands)
+
+- **2026-10-27 (film round + owner-feedback re-cut)** — silent master `demo-vertical.mp4`
+  (3:35, 1080×1920, 20 segments) + `demo-walkthrough.gif` (20 keyframes, 16.4 s loop) shipped;
+  old `hermes-wear-vertical.*` / `orb-dial.gif` retired. First cut FAILED owner review: black
+  watch spans, dead-static stretches, stale pills. Fix = forensics, not guessing:
+  `timeline.py` (per-second luma+motion over every raw) + a contact sheet of every segment's
+  55% frame — every window then placed on measured evidence (white mermaid content is luma 164
+  at a1b 15–33; sheet scrim at a5b 59–64; expanded approval card at a6 63–74 with the tap at
+  71…). Two hard traps learned: watch raws can be mostly SCREEN-OFF (watch not charging →
+  ambient at ~15 s kills `screenrecord` mid-take — every new-take attempt that day died at
+  13–15 s), and text-only screens measure dark (~luma 6–13) so luma thresholds must never
+  cancel a beat that a real frame-check proves is good.
+- **Later-gen watch raws became burst-VFR junk** (a8f: 31 frames in 22 s, delivered in 3 clusters
+  at pts 0-2.6 / 14.9-15.7 / 22.5): `trim` windows land in EMPTY spans (black segs) and output
+  `-ss` silently clamps to the next burst, faking "content at every time". Check
+  `ffprobe -show_entries frame=pts_time` before trusting any new raw. When the footage is only
+  stills, choreograph honestly: pose stills + slow zoompan push-in reads editorial, a dead
+  recording reads broken (that is what the STOP beat is now). `zoompan d=` multiplies frames —
+  always cap with `-frames:v`.
+- **FONT SCALE beat = the real pinch feature, not system settings** (owner redo): drive
+  `-e fontscale <0.75..1.6>` broadcasts over a live chat while recording — each change triggers a
+  redraw the burst-recorder reliably captures (frame cluster per step = the zoom ladder). Content
+  must be a SHOWCASE: ask the model for a heading + bold + 2-column table (2-col renders as the
+  real grid; 5+ cols degrades to list rows) + bullets, scroll to TOP before recording. The
+  delivered beat = 7 hard-cut zoom stages (the cuts ARE the pinch motion) + push-in finale. Design locked with owner: 760 px watch circle (70 % width) with
+  transparent-outside mask + white glass-edge ring, harbor canvas, cobalt caption pills in
+  RulesGothicCnd; windows locked to measured motion/luma timelines (see above). Pipeline persisted
+  to `tools/demo/` (canvas_build/assemble/gif_build, `DEMO_TMP` workdir env; fonts stay in devkit —
+  trial license). Encode traps + the NVENC driver-610 requirement recorded in §7. Screenshots
+  re-issued as circle-masked PNGs (square originals in `tmp-shots/screens-square/`); redaction
+  bands re-measured (§4 rule); README gained the round-first note. Film keyframes vision-gated
+  (hero/stream/approval/deep-link: PASS). GPU note: box has a 4070 + RTX PRO 6000 Blackwell, but
+  ffmpeg's NVENC needs driver ≥ 610 (has 580) — after upgrade switch the codec line in
+  `tools/demo/assemble.py` to `h264_nvenc`.
 
 - **2026-10-27 (shots round)** — all 36 screenshots re-shot under wear-demo on `240a957` and
   vision-gated. Findings: (a) **app-level fork 404s** — the Sessions-sheet fork POSTs
@@ -278,3 +361,10 @@ media path.
 - **2026-10-26 `39f770b`** — orb-spirit notification icon (+ color largeIcon),
   ⚙ settings lane at 3:00, `notify_demo` hook → ledger rows 22, 23 + new S30–S34.
 - (next feature updates §2 + README §3 rows in the SAME commit)
+
+- **2026-10-27 (publish round)** — owner's audio-scored master replaced the silent cut; mp4s are no
+  longer tracked at all (`.gitignore docs/demo/*.mp4`; canonical home = YouTube, link wired into the
+  README hero). The GIF IS the video link (click the strip → tour). Loop slowed to ~31 s
+  (1.4 s/frame floor) after owner: "flashes through too damn fast to read". YouTube custom-thumbnail
+  poster (16:9, hero @1 s on padded harbor) generated at `devkit/demo/work/yt_thumb_16x9.png`
+  (owner copy in ~/Pictures). §9 invariant reworded: tracked media = screenshots + GIF only.
