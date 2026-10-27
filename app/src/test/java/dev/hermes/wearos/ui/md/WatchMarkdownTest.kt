@@ -90,6 +90,20 @@ class WatchMarkdownTest {
         )
     }
 
+    @Test fun underscoreEmphasisAndSnakeCase() {
+        val p = WatchMarkdown.parse("Peak _aurora NO_ tonight, see __the map__ (file my_var_name here).")[0] as MdBlock.Paragraph
+        assertEquals(
+            listOf(
+                MdSpan.Plain("Peak "),
+                MdSpan.Italic(listOf(MdSpan.Plain("aurora NO"))),
+                MdSpan.Plain(" tonight, see "),
+                MdSpan.Bold(listOf(MdSpan.Plain("the map"))),
+                MdSpan.Plain(" (file my_var_name here)."),
+            ),
+            p.spans,
+        )
+    }
+
     @Test fun boldCanNestCode() {
         val p = WatchMarkdown.parse("**run `main()` now**")[0] as MdBlock.Paragraph
         assertEquals(

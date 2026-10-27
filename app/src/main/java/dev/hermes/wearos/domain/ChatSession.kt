@@ -433,6 +433,7 @@ class ChatSession(
                 _state.value = _state.value.copy(status = "thinking…")
                 openEventStream(a, accepted.runId)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e // chat/agent switch mid-send is not an error
                 Log.e(TAG, "ask failed", e)
                 finishWith("⚠️ ${explain(e)}", error = true)
             }

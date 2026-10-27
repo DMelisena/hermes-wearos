@@ -301,6 +301,26 @@ object WatchMarkdown {
                 }
                 buf.append(c); i++; continue
             }
+            // Underscore emphasis (models default to _this_ far more than *this*): guarded so
+            // snake_case survives — opening `_` must not hug a letter, closing `_` likewise.
+            if (c == '_' && !buf.lastOrNull().let { it != null && it.isLetterOrDigit() }) {
+                if (text.startsWith("__", i) && !text.startsWith("___", i)) {
+                    val close = text.indexOf("__", i + 2)
+                    if (close > i + 2) {
+                        flush(); spans += MdSpan.Bold(parseInline(text.substring(i + 2, close))); i = close + 2; continue
+                    }
+                    buf.append("__"); i += 2; continue
+                }
+                if (i + 1 < text.length && text[i + 1] != '_' && !text[i + 1].isWhitespace()) {
+                    val close = text.indexOf('_', i + 1)
+                    if (close > i + 1 && !text[close - 1].isWhitespace() &&
+                        !(close + 1 < text.length && text[close + 1].isLetterOrDigit())
+                    ) {
+                        flush(); spans += MdSpan.Italic(parseInline(text.substring(i + 1, close))); i = close + 1; continue
+                    }
+                }
+                buf.append(c); i++; continue
+            }
             buf.append(c); i++
         }
         flush()
