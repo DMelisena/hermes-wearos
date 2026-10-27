@@ -9,6 +9,7 @@ import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.graphics.drawable.toBitmap
 import dev.hermes.wearos.MainActivity
 import dev.hermes.wearos.R
 import dev.hermes.wearos.domain.ApprovalInfo
@@ -104,9 +105,24 @@ object Notifs {
     private fun post(app: Context, id: Int, channel: String, title: String, text: String, tap: PendingIntent) =
         notify(app, id, base(app, channel, title, text).setContentIntent(tap).build())
 
+    /** The orb spirit on a black disc (drawable-nodpi) — the expanded card shows the real orb.
+     *  Decoded once, lazily: webp is small, but a bitmap per post on a watch is still silly. */
+    private var largeIcon: android.graphics.Bitmap? = null
+    private fun orbLargeIcon(app: Context): android.graphics.Bitmap? {
+        largeIcon?.let { return it }
+        return try {
+            val d = androidx.core.content.ContextCompat.getDrawable(app, R.drawable.ic_notif_large)
+                ?: return null
+            d.toBitmap(288, 288).also { largeIcon = it }
+        } catch (e: Exception) {
+            Log.w(TAG, "notif large icon unavailable: $e"); null
+        }
+    }
+
     private fun base(app: Context, channel: String, title: String, text: String) =
         NotificationCompat.Builder(app, channel)
-            .setSmallIcon(R.drawable.ic_stat_hermes)
+            .setSmallIcon(R.drawable.ic_stat_hermes) // orb-spirit silhouette (white stencil, system tints)
+            .setLargeIcon(orbLargeIcon(app))
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))

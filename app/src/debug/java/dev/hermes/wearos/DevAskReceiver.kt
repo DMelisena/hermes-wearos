@@ -26,6 +26,8 @@ import kotlinx.coroutines.launch
  *  scale like 0.5 opens BELOW fit directly, 0/false closes).
  *  -e model_picker (open the 🧠 model picker on the active chat — the SPEC §12.7 lane without a
  *  flaky synthetic dial release; waits on the gateway catalog round-trip itself).
+ *  -e notify_demo plain|approval|both (post the REAL notification cards on command — the deterministic
+ *  door for the demo's "off the wrist" act, see docs/DEMO.md).
  *  Gateway-epic additions: -e gw_dump, -e gw_probe, -e gw_select <id>.
  *  Dial-epic additions (SPEC §12-13): -e render [list|tables|wide|mermaid|pdf|link|media|all]
  *  (inject a canned answer that exercises the media surfaces — no gateway, no model),
@@ -198,6 +200,36 @@ class DevAskReceiver : BroadcastReceiver() {
         if (intent?.hasExtra("dial_preview") == true) { WearApp.Graph.devDialPreview.value = true; return }
         // MODEL PICKER PIN (`-e model_picker`): opens the 🧠 picker like a lane release would.
         if (intent?.hasExtra("model_picker") == true) { WearApp.Graph.devModelPicker.value = true; return }
+        // NOTIFY DEMO (`-e notify_demo plain|approval|both`): posts the REAL notification shapes on
+        // command — the settle card and the Approve/Deny approval card (runId "demo-run", so a
+        // tapped Approve lands in ApprovalNotificationReceiver and fail-softs) — the deterministic
+        // door the demo capture needs instead of racing a live run's timing (§DEMO.md).
+        intent?.getStringExtra("notify_demo")?.let { mode ->
+            val app = context?.applicationContext ?: return
+            // A FRESH id per post (unless "reuse"): a re-posted id keeps its READ flag, and
+            // OneUI only fronts the notification drawer when something unread arrived.
+            val n = if (mode.startsWith("reuse")) System.currentTimeMillis() / 86_400_000L
+                    else System.currentTimeMillis()
+            val m = mode.removePrefix("reuse")
+            if (m != "approval") {
+                dev.hermes.wearos.notify.Notifs.settle(
+                    app, "demo-$n", "wear-demo brief",
+                    "Harbor tonight: 8°C, wind SW 12 km/h, aurora KP 6 — the plot is in the chat.", false,
+                )
+            }
+            if (m != "plain") {
+                dev.hermes.wearos.notify.Notifs.approval(
+                    app, "demo-$n",
+                    dev.hermes.wearos.domain.ApprovalInfo(
+                        "demo-run-$n", "demo-req-$n",
+                        "Send the buyer reply to Hannah? (draft ready)",
+                        listOf("approve", "deny"),
+                    ),
+                )
+            }
+            Log.i("HermesWear", "dev: notify_demo '$mode' posted as #$n")
+            return
+        }
         // SEARCH AS A THUMB TYPES (`-e search haiku`) — adb input text can't traverse the Wear IME.
         intent?.getStringExtra("search")?.let { WearApp.Graph.devSearchQuery.value = it; return }
         // CATCH UP THE OPEN CHAT (`-e catchup go`) — same door the pull-up gesture uses.

@@ -44,7 +44,7 @@ class OrbDialTest {
     @Test fun `the default map is the owner's clock face`() {
         assertEquals(
             listOf(
-                Lane.Keyboard, Lane.Mute, Lane.RecordHi, Lane.Model,
+                Lane.Keyboard, Lane.Mute, Lane.Settings, Lane.Model,
                 Lane.Commands, Lane.Chats, Lane.Sessions, Lane.Agents,
             ),
             slots,
@@ -57,7 +57,7 @@ class OrbDialTest {
     @Test fun `each clock direction lands on its lane - straight drags`() {
         assertEquals(Lane.Keyboard, laneAt(0f))     // up: the drag-up that already shipped
         assertEquals(Lane.Mute, laneAt(45f))        // 1:30
-        assertEquals(Lane.RecordHi, laneAt(90f))    // 3:00
+        assertEquals(Lane.Settings, laneAt(90f))     // 3:00 — the settings lane (owner: "tough to get to")
         assertEquals(Lane.Model, laneAt(135f)) // 4:30
         assertEquals(Lane.Commands, laneAt(180f))   // straight down
         assertEquals(Lane.Chats, laneAt(225f))      // 7:30
@@ -67,7 +67,7 @@ class OrbDialTest {
 
     @Test fun `wedges own the slop - every direction inside a wedge keeps its lane`() {
         for ((clock, lane) in listOf(
-            0f to Lane.Keyboard, 45f to Lane.Mute, 90f to Lane.RecordHi, 135f to Lane.Model,
+            0f to Lane.Keyboard, 45f to Lane.Mute, 90f to Lane.Settings, 135f to Lane.Model,
             180f to Lane.Commands, 225f to Lane.Chats, 270f to Lane.Sessions, 315f to Lane.Agents,
         )) {
             for (off in listOf(-18f, -8f, 8f, 18f)) {
@@ -170,7 +170,7 @@ class OrbDialTest {
 
     @Test fun `map round-trips through the persisted string`() {
         val raw = OrbDial.encode(slots)
-        assertEquals("keyboard,mute,record_hi,model,commands,chats,sessions,agents", raw)
+        assertEquals("keyboard,mute,settings,model,commands,chats,sessions,agents", raw)
         assertEquals(slots, OrbDial.decode(raw))
     }
 
@@ -217,7 +217,7 @@ class OrbDialTest {
     @Test fun `lane ids are stable settings vocabulary`() {
         listOf(
             "none", "keyboard", "mute", "record_hi", "model",
-            "commands", "chats", "sessions", "agents",
+            "commands", "chats", "sessions", "agents", "settings",
         ).forEach { assertNotNull(it, Lane.fromId(it)) }
         assertNull(Lane.fromId("teleport"))
         assertNull(Lane.fromId(""))
@@ -229,7 +229,8 @@ class OrbDialTest {
         // Owners who never touched the dial carry "…,voice_notes,…" in DataStore. Unknown id →
         // that slot takes its DEFAULT, which is now Lane.Model — silent one-lane migration.
         val legacy = OrbDial.decode("keyboard,mute,record_hi,voice_notes,commands,chats,sessions,agents")
-        assertEquals(Lane.Model, legacy[3])
+        assertEquals(Lane.Model, legacy[3])          // retired id → its (new) default
+        assertEquals(Lane.RecordHi, legacy[2])       // a CHOSEN lane survives a default change
         assertEquals(Lane.Keyboard, legacy[0])
         assertEquals(Lane.Agents, legacy[7])
     }

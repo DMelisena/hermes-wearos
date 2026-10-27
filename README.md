@@ -4,7 +4,7 @@
 Telegram in the middle. Tap the orb, say a thing, and a real agent on your own box — with real tools,
 memory, cron jobs, and your files — answers on your wrist, out loud, before your hand leaves the glass.
 
-<img src="docs/screens/01-orb-cluster.png" width="220" alt="Hermes Wear OS main screen: the orb is the only control — drag it eight ways for keyboard, mute, record, notes, commands, chats, sessions, agents" align="right" hspace="24"/>
+<img src="docs/screens/01-orb-cluster.png" width="220" alt="Hermes Wear OS main screen: the orb is the only control — drag it eight ways for keyboard, mute, settings, model, commands, chats, sessions, agents" align="right" hspace="24"/>
 
 Everything heavy runs on your gateway. The watch streams text in, streams tokens back, renders the
 answer (markdown, code, tables, **mermaid**, full-res images), and speaks it with an on-device voice.
@@ -86,7 +86,7 @@ direction so an accidental drag does nothing):
 |---|---|---|
 | 12:00 | ⌨ **keyboard** | opens the text editor — type it, or use the keyboard's own mic |
 | 1:30 | 🔊 **mute** | toggles spoken replies (TTS is on by default) |
-| 3:00 | 🎙 **record** | hi-fi capture → your gateway's whisper STT *(voice-loop wiring is on the roadmap)* |
+| 3:00 | ⚙ **settings** | straight to Settings — because getting there otherwise is a finger-crawl (`record` → hi-fi whisper STT lives on as a remap lane, roadmap in progress) |
 | 4:30 | 🧠 **model** | per-chat model picker — lists only what your gateway has enabled; the pick is remembered for that chat, and "gateway default" hands it back |
 | 6:00 | ⌘ **commands** | the searchable slash-command overlay (gateway catalog + your recents) |
 | 7:30 | 💬 **chats** | your chat list for the current agent |

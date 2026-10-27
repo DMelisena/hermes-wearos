@@ -279,7 +279,7 @@ Eight 45° sectors, default map (every slot remappable in Settings ▸ Orb):
 |---|---|---|---|
 | 12:00 | keyboard | `keyboard` | the drag-up that already ships (`OrbGesture.DRAG_UP` becomes this sector — semantics unchanged) |
 | 1:30 | mute / unmute | `mute` | the mute satellite's job; same way again = the inverse |
-| 3:00 | record → gateway STT | `record_hi` | high-quality transcription path (F19) |
+| 3:00 | settings | `settings` | one drag to Settings (owner: "tough to get to settings"); replaced the unshipped `record_hi` stub, which remains a remap lane (F19) |
 | 4:30 | model picker | `model` | 🧠 per-session model selector — replaced `voice_notes` (F20 stub nobody fired), SPEC §12.6 |
 | 6:00 | slash commands | `commands` | the overlay (F15) |
 | 7:30 | chats | `chats` | local chats for the active agent (the header chip's job) |

@@ -18,6 +18,11 @@ import kotlin.math.sqrt
  * take: "I've never used the notes — make that the model selector". Old saves still carry
  * `voice_notes`; [OrbDial.decode] treats it as an unknown id and hands that slot the new default,
  * which is exactly the migration we want.
+ *
+ * 3:00 followed in the same batch: `record_hi` was the OTHER never-shipped stub, and the owner
+ * asked for a straight line from the dial to Settings ("it's a little tough to get to settings").
+ * So defaults send 3:00 → [Lane.Settings]; `record_hi` stays a first-class lane for anyone who
+ * remaps it — and old saves that name it explicitly keep it, honoring a choice that was made.
  */
 enum class Lane(val id: String, val glyph: String, val label: String) {
     None("none", "·", "off"),
@@ -28,7 +33,8 @@ enum class Lane(val id: String, val glyph: String, val label: String) {
     Commands("commands", "⌘", "commands"),
     Chats("chats", "💬", "chats"),
     Sessions("sessions", "≡", "sessions"),
-    Agents("agents", "👤", "agents");
+    Agents("agents", "👤", "agents"),
+    Settings("settings", "⚙", "settings");
 
     companion object {
         fun fromId(id: String): Lane? = entries.firstOrNull { it.id == id.trim() }
@@ -100,7 +106,7 @@ object OrbDial {
 
     /** Owner's default map, slot 0 → slot 7 (12:00 → 10:30 clockwise), SPEC §12.1. */
     val DEFAULT_SLOTS: List<Lane> = listOf(
-        Lane.Keyboard, Lane.Mute, Lane.RecordHi, Lane.Model,
+        Lane.Keyboard, Lane.Mute, Lane.Settings, Lane.Model,
         Lane.Commands, Lane.Chats, Lane.Sessions, Lane.Agents,
     )
 

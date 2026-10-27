@@ -463,6 +463,9 @@ class MainActivity : ComponentActivity() {
                             editor = EditorReq(text = draft, original = "", hint = "type or swipe…")
                         }
                         Lane.Mute -> speak.setVoiceEnabled(!voiceOut)
+                        // ⚙ 3:00 — the owner's "settings is a little tough to get to": one drag
+                        // straight to Settings (record_hi lives on as a remap lane, §12.1).
+                        Lane.Settings -> screen = Screen.Settings
                         Lane.RecordHi -> sttStatus.value = "record→pc STT: branch 2 (§13.4)"
                         // 🧠 the model lane (owner: notes nobody used → "make that the model
                         // selector"). Always lands on the chat first: the pick is per-chat.
