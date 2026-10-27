@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -36,6 +37,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -67,30 +69,31 @@ fun MdBlockView(block: MdBlock, blockKey: Any, modifier: Modifier = Modifier) {
             fontWeight = FontWeight.Bold,
         )
 
-        is MdBlock.Paragraph -> Text(
+        is MdBlock.Paragraph -> MdBodyText(
             block.spans.annotated(),
             modifier = modifier.fillMaxWidth(),
             style = MaterialTheme.typography.body2.scaled(),
         )
 
-        is MdBlock.BulletItem -> Text(
+        is MdBlock.BulletItem -> MdBodyText(
             block.spans.annotated("•  "),
             modifier = modifier.fillMaxWidth().padding(start = (block.indent * 8).dp),
             style = MaterialTheme.typography.body2.scaled(),
         )
 
-        is MdBlock.NumberedItem -> Text(
+        is MdBlock.NumberedItem -> MdBodyText(
             block.spans.annotated("${block.n}.  "),
             modifier = modifier.fillMaxWidth(),
             style = MaterialTheme.typography.body2.scaled(),
         )
 
         // Blockquote: caption2 + indent + a leading "│ " bar (cheaper than a canvas line on a round screen).
-        is MdBlock.Quote -> Text(
+        is MdBlock.Quote -> MdBodyText(
             block.spans.annotated("│ "),
             modifier = modifier.fillMaxWidth().padding(start = 6.dp),
-            style = MaterialTheme.typography.caption2.scaled(),
-            color = MaterialTheme.colors.onBackground.copy(alpha = 0.75f),
+            style = MaterialTheme.typography.caption2.scaled().copy(
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.75f),
+            ),
         )
 
         is MdBlock.CodeBlock -> CodeCard(block.lang, block.code, blockKey, modifier)
@@ -419,5 +422,50 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendSpans(spans: 
         is MdSpan.InlineCode -> withStyle(
             SpanStyle(fontFamily = FontFamily.Monospace, background = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.12f)),
         ) { append(s.text) }
+        // Clickable link: blue+underline for the eye, a string annotation for the finger
+        // (MdBodyText reads the tag back off the tap offset). Nesting keeps inner styles.
+        is MdSpan.Link -> {
+            val start = length
+            withStyle(SpanStyle(color = LinkBlue, textDecoration = TextDecoration.Underline)) { appendSpans(s.children) }
+            addStringAnnotation("hermes.url", s.url, start, length)
+        }
     }
+}
+
+private val LinkBlue = Color(0xFF8AB4F8)
+
+/**
+ * Body text with LINKS (owner: "URL links, they're not clickable … open whatever browser is
+ * default on my watch"). Wraps foundation [ClickableText]: the tap offset resolves to a
+ * "hermes.url" annotation (±1 — a tap right at the end of a link must still hit it), fired as an
+ * ACTION_VIEW so the watch's default browser/handler chooses. No handler (many Wear builds ship
+ * none) → honest toast, never a crash.
+ */
+@Composable
+private fun MdBodyText(
+    text: AnnotatedString,
+    modifier: Modifier = Modifier,
+    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.body2.scaled(),
+) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    ClickableText(
+        text = text,
+        modifier = modifier,
+        style = style,
+        onClick = { offset ->
+            text.getStringAnnotations("hermes.url", (offset - 1).coerceAtLeast(0), offset)
+                .firstOrNull()?.item?.let { url ->
+                    try {
+                        ctx.startActivity(
+                            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(
+                            ctx, "no app opens ${url.take(36)}", android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+        },
+    )
 }

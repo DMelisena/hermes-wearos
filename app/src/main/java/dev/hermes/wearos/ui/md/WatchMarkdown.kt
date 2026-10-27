@@ -10,6 +10,14 @@ sealed interface MdSpan {
     data class Bold(val children: List<MdSpan>) : MdSpan
     data class Italic(val children: List<MdSpan>) : MdSpan
     data class InlineCode(val text: String) : MdSpan
+
+    /**
+     * Clickable link (owner: "URL links … should be clickable … open whatever browser is default
+     * on my watch"). http(s)/mailto only — a gateway-local `/path` isn't a browser target, and
+     * the F6 image path stays image-card territory. [url] is the RAW target; [children] keep the
+     * label's inline styling (a bold link label stays bold).
+     */
+    data class Link(val url: String, val children: List<MdSpan>) : MdSpan
 }
 
 /** Block-level nodes (SPEC §5 F3). One node ≈ one composable row on the watch list. */
@@ -225,7 +233,15 @@ object WatchMarkdown {
     private fun cellsOf(line: String): List<String> =
         line.trim().trimStart('|').trimEnd('|').split('|').map { it.trim() }
 
-    // ---- inline pass: **bold**, *italic*, `code`; anything unterminated stays literal ----
+    // ---- inline pass: **bold**, *italic*, `code`, [label](url), bare https://…; unterminated stays literal ----
+
+    /** Bare-URL autolink scan (owner: URLs must be clickable). Deliberately conservative: no
+     *  fragment runs with trailing punctuation (a sentence-ending dot is not part of the link). */
+    private val BARE_URL = Regex("""https?://[^\s<>"'\[\]\u4e00-\u9fff，。；！？]+""")
+    private val TRAILING_PUNCT = ".,;:!?*"
+
+    private fun isWebUrl(url: String): Boolean =
+        url.startsWith("http://") || url.startsWith("https://") || url.startsWith("mailto:")
 
     internal fun parseInline(text: String): List<MdSpan> {
         if (text.isEmpty()) return emptyList()
@@ -243,6 +259,33 @@ object WatchMarkdown {
                     flush(); spans += MdSpan.InlineCode(text.substring(i + 1, close)); i = close + 1; continue
                 }
                 buf.append(c); i++; continue // lone backtick: literal
+            }
+            // [label](url) — a malformed/unclosed/odd-scheme link renders as the plain text it is.
+            if (c == '[') {
+                val close = text.indexOf(']', i + 1)
+                val open = if (close > i + 1 && close + 1 < text.length && text[close + 1] == '(') close + 2 else -1
+                val end = if (open > 0) text.indexOf(')', open) else -1
+                if (end > open) {
+                    val label = text.substring(i + 1, close)
+                    val url = text.substring(open, end).trim()
+                    if (isWebUrl(url)) {
+                        flush(); spans += MdSpan.Link(url, parseInline(label)); i = end + 1; continue
+                    }
+                }
+                buf.append(c); i++; continue
+            }
+            // Bare URL autolink, only at a word boundary (never the tail of "xhttp://…"), and
+            // never right after "(" — that is markdown's own [label](url) shape, partial
+            // includes: a stream-cut "[label](https…" must stay literal, not half-link.
+            if (c == 'h' && (i == 0 || !text[i - 1].let { it.isLetterOrDigit() || it in "/?.=&%_:(" })) {
+                val m = BARE_URL.find(text, i)
+                if (m != null && m.range.first == i) {
+                    var url = m.value
+                    while (url.isNotEmpty() && url.last() in TRAILING_PUNCT) url = url.dropLast(1)
+                    if (url.isNotEmpty()) {
+                        flush(); spans += MdSpan.Link(url, listOf(MdSpan.Plain(url))); i += url.length; continue
+                    }
+                }
             }
             if (c == '*' && text.startsWith("**", i)) {
                 val close = text.indexOf("**", i + 2)
