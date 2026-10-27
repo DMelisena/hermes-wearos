@@ -66,7 +66,9 @@ enum class RenderCase(val id: String, val markdown: String) {
         "Two links to prove the tap lane:\n\n" +
             "- the gateway dashboard: [8642 dashboard](http://127.0.0.1:8642/)\n" +
             "- the Hermes repo: [borealBytes/hermes](https://github.com/borealBytes)\n\n" +
-            "A tap must resolve to Samsung Internet here; with no resolver the URL copies instead.\n",
+            "A tap fires ACTION_VIEW — the watch's default browser opens it; with no resolver the\n" +
+            "watch says so plainly instead of eating the tap. A bare https://openrouter.ai/models\n" +
+            "autolinks too.\n",
     ),
     Media(
         "media",

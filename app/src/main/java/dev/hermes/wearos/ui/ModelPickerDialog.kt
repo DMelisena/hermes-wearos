@@ -2,6 +2,7 @@ package dev.hermes.wearos.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,15 +55,23 @@ fun ModelPickerDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Column(
+        // Bounded full-screen box with the scroll INSIDE: a bare scrollable Column inside a
+        // wrap-content dialog window reports its natural (taller-than-the-circle) height and the
+        // window then CENTERS it — the title scrolls off before the list even appears.
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black)
-                .padding(top = 30.dp, bottom = 18.dp)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+                .background(Color.Black),
         ) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(top = 30.dp, bottom = 18.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
             Text("Model", style = MaterialTheme.typography.title3, textAlign = TextAlign.Center)
             Text(
                 "on $agent · this chat only",
@@ -124,6 +133,7 @@ fun ModelPickerDialog(
                     backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.35f),
                 ),
             ) { Text("close", style = MaterialTheme.typography.button) }
+            }
         }
     }
 }
