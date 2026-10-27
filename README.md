@@ -315,7 +315,7 @@ mermaid as fence blocks (the watch renders them). Start the watchkit helper with
 
 ```bash
 source scripts/env.sh
-../devkit/gradle/current/bin/gradle :app:assembleDebug :app:testDebugUnitTest   # 276 tests
+../devkit/gradle/current/bin/gradle :app:assembleDebug :app:testDebugUnitTest   # 287 tests
 scripts/emulator.sh                        # optional headless Wear emulator
 scripts/doctor.sh                          # toolchain + link health report
 ```
@@ -324,6 +324,9 @@ scripts/doctor.sh                          # toolchain + link health report
   trap hit: Wear Compose 1.4.1 quirks, 32-bit-only watch ABI, Samsung `DataType` name drift, SLC
   anchor fights, flaky wireless debug installs). If you build for watches, read it before fighting the
   same ghosts.
+- `docs/DEMO.md` — the living demo-production ledger: every feature mapped to its screenshot **and**
+  its beat in `demo-vertical.mp4`, the README change checklist, capture recipes and the verification
+  gates. `scripts/demo-check.sh` enforces the ledger mechanically. Keep it current when features land.
 - `app/src/debug/.../DevAskReceiver.kt` — adb-broadcast harness (`-e text '...'`, `-e ptt_demo`,
   `-e fontscale`, `-e agent …`): scriptable end-to-end demos, which is exactly how every screenshot
   in this README was captured.
