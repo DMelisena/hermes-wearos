@@ -40,9 +40,9 @@ encrypted and bounded. It's the "own your stack" demo that lives on your wrist.
 | | |
 |---|---|
 | <img src="docs/screens/02-chat-markdown.png" width="180"/> | <img src="docs/screens/02b-chat-table.png" width="180"/> |
-| **Streaming markdown**, rendered for a round screen: headings, bold, italics, bullets, numbered lists, and tap-to-expand code chips — with math in real unicode (`E = mc²`, subscripts), because LaTeX doesn't render on 1.4 inches. Pinch to scale text (double-tap resets); media keeps its own zoom. | **Real tables from plain markdown** — bold header, hairline rule, aligned cells, no pipe vomit; wider tables degrade to readable rows instead of a grid you can't parse. |
+| **Streaming markdown**, rendered for a round screen: headings, bold, italics, bullets, numbered lists, and tap-to-expand code chips — with math in real unicode (`E = mc²`, subscripts), because LaTeX doesn't render on 1.4 inches. **Links are links:** tap one and the watch's browser takes it. Pinch to scale text (double-tap resets); media keeps its own zoom. | **Real tables from plain markdown** — bold header, hairline rule, aligned cells, no pipe vomit; wider tables degrade to readable rows instead of a grid you can't parse. |
 | <img src="docs/screens/08-sessions.png" width="180"/> | <img src="docs/screens/09-resumed.png" width="180"/> |
-| **Sessions, from your wrist** — browse and adopt desktop/server sessions (`💻`) with history backfilled; per-agent filters, one-tap new, and a **voice-or-type search** over every chat (server-side full-text; the snippet brackets the hit). Opening a session re-pulls its gateway tail by itself — a desktop chat that kept talking shows the rest without a manual refresh. | **A real assistant** — your gateway's persona, tools, memory, and cron output; here, a debug conversation resumed from a desktop session, history banner and all. |
+| **Sessions, from your wrist** — browse and adopt desktop/server sessions (`💻`) with history backfilled in full (pages-long answers arrive whole, not clipped); per-agent filters, one-tap new, and a **voice-or-type search** over every chat (server-side full-text; the snippet brackets the hit). Opening a session re-pulls its gateway tail by itself — a desktop chat that kept talking shows the rest without a manual refresh. | **A real assistant** — your gateway's persona, tools, memory, and cron output; here, a debug conversation resumed from a desktop session, history banner and all. |
 | <img src="docs/screens/03-image-card.png" width="180"/> | <img src="docs/screens/04-viewer-zoom.png" width="180"/> |
 | **Images at full resolution** — the agent draws, the watch decodes and shows it. Tap to open the viewer. | **Zoom viewer** — double-tap or pinch to zoom, drag to pan below fit; close with the ✕ chip or the back button. |
 | <img src="docs/screens/06-ptt-overlay.png" width="180"/> | <img src="docs/screens/07-stop-running.png" width="180"/> |
@@ -87,7 +87,7 @@ direction so an accidental drag does nothing):
 | 12:00 | ⌨ **keyboard** | opens the text editor — type it, or use the keyboard's own mic |
 | 1:30 | 🔊 **mute** | toggles spoken replies (TTS is on by default) |
 | 3:00 | 🎙 **record** | hi-fi capture → your gateway's whisper STT *(voice-loop wiring is on the roadmap)* |
-| 4:30 | 📝 **notes** | voice-note ring — dictated notes straight into the chat *(same, in progress)* |
+| 4:30 | 🧠 **model** | per-chat model picker — lists only what your gateway has enabled; the pick is remembered for that chat, and "gateway default" hands it back |
 | 6:00 | ⌘ **commands** | the searchable slash-command overlay (gateway catalog + your recents) |
 | 7:30 | 💬 **chats** | your chat list for the current agent |
 | 9:00 | ≡ **sessions** | the session browser — adopt desktop sessions, fork, archive, delete |

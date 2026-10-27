@@ -280,7 +280,7 @@ Eight 45° sectors, default map (every slot remappable in Settings ▸ Orb):
 | 12:00 | keyboard | `keyboard` | the drag-up that already ships (`OrbGesture.DRAG_UP` becomes this sector — semantics unchanged) |
 | 1:30 | mute / unmute | `mute` | the mute satellite's job; same way again = the inverse |
 | 3:00 | record → gateway STT | `record_hi` | high-quality transcription path (F19) |
-| 4:30 | voice notes | `voice_notes` | last N on-device transcripts, copy/paste (F20) |
+| 4:30 | model picker | `model` | 🧠 per-session model selector — replaced `voice_notes` (F20 stub nobody fired), SPEC §12.6 |
 | 6:00 | slash commands | `commands` | the overlay (F15) |
 | 7:30 | chats | `chats` | local chats for the active agent (the header chip's job) |
 | 9:00 | sessions | `sessions` | gateway/computer sessions |
@@ -483,6 +483,42 @@ profile's key, and most profiles have none (§12.2) — the desktop `default` st
   while anything is hidden, and long-pressing one of those rows offers ♻️ unarchive. The watch's
   own CHAT of an archived session deliberately survives — hiding history shouldn't vaporize the
   conversation open under your thumb. Delete keeps its double check for the sure thing.
+
+### 12.7 The model selector (F22) — orb 🧠 lane, per-session model, gateway-owned catalog
+
+Owner: *"instead of that little thing on the orb for notes — I've never used the notes — make that
+the model selector… it'll just remember that model within that session… whatever our default model
+is set to in the gateway we want for NEW sessions… only models enabled within the gateway should be
+shown… no endpoint editing here, that's the gateway's job."*
+
+**Gateway contract (all three verified live, Hermes 0.21.7, before a line of app code was written):**
+
+- `GET /api/model/options` — provider catalog; **enabled = `authenticated` AND `models` non-empty**;
+  top-level `model`/`provider` = the profile's configured default. Advertised via `model_options`
+  in `/v1/capabilities`. `domain/ModelCatalog.kt` filters + orders (current provider first) and
+  caches per base URL for 3 min — it's per-profile, so agent switches refetch.
+- `POST /v1/runs {model}` — a real model id ROUTES the run (`runtime.model` comes back as asked),
+  and `"hermes-agent"` (the virtual alias the watch already sent) means profile default. This is
+  the ONE lever the watch uses.
+- The run **stamps** `sessions.model` with whatever it served; `GET /api/sessions/{id} → model`
+  reads it back. So the watch: picks are stored per-chat (`ChatMeta.model`) and RESENT with every
+  ask; entering an un-picked chat adopts the stamped model (adopted/desktop sessions keep their
+  model, cross-device continuity for free); a never-run session adopts nothing and rides the
+  default. `POST /api/sessions/{id}/model` (the lock endpoint) is deliberately NOT used: `/v1/runs`
+  ignores it (only `/api/sessions/{id}/chat` honors it) — proven by running a locked session and
+  watching `runtime.model` ignore the lock.
+
+**UI:** two-stage dialog (`ui/ModelPickerDialog.kt`) — providers, then that provider's models —
+because an authenticated catalog here is 7 providers × up to 62 ids and a 170-row scroll is a
+wrist-killer. A top row "gateway default" un-pins the chat. ● marks what will actually run.
+Landing the pick takes effect on the NEXT ask (a running turn keeps its model — same semantics as
+the gateway itself). Lane migration is free: old saves carry `voice_notes`, an id that no longer
+decodes, so [OrbDial.decode] hands 4:30 the new default `model` (§12.1 decode rule).
+
+**Also from the same owner batch:** backfill no longer clips answers — watchkit's `MSGS_CONTENT_MAX`
+and the app's mirror `SessionHistory.MAX_TEXT` went 2 KB → 20 KB ("we need the full replies"); and
+markdown/bare URLs are clickable in chat (`MdSpan.Link` → `hermes.url` annotation → ACTION_VIEW on
+the watch's default browser, honest toast when none exists).
 
 ---
 
