@@ -926,7 +926,9 @@ async function handleSessions(req, res, ip, params) {
 // content, compression-summary rows kept as role "summary", process/system display_kinds
 // dropped. NEWEST [limit] rows, returned oldest-first (a 300-msg chat opens on its tail).
 const MSGS_LIMIT_MAX = 120;
-const MSGS_CONTENT_MAX = 2000; // a watch can't render a 50 KB wall — cap each message server-side
+// Owner: "long replies are getting cut off — we need the full replies." The old 2 KB wall ate
+// every real answer. 20 KB renders any honest chat turn in full and still refuses a log dump.
+const MSGS_CONTENT_MAX = 20_000;
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
 
 async function handleSessionMessages(req, res, ip, params) {

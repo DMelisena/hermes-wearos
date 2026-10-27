@@ -21,8 +21,13 @@ object SessionHistory {
     /** Same cap the endpoint clamps to: ~120 newest turns on a watch transcript. */
     const val MAX_MESSAGES = 120
 
-    /** Server caps at 2 KB/msg; this is the belt-and-suspenders trim for older watchkits. */
-    const val MAX_TEXT = 2000
+    /**
+     * Belt-and-suspenders trim mirroring watchkit's `MSGS_CONTENT_MAX` (owner: "long replies are
+     * getting cut off … we need the full replies" — the old 2 KB clamp was the whole bug). Chat
+     * answers run to pages now; anything past a 20 KB single message is a log dump the watch
+     * still shows in full, clipped only in the absurd case.
+     */
+    const val MAX_TEXT = 20_000
 
     /** Compression-summary rows render as one assistant line with this marker. */
     const val SUMMARY_PREFIX = "🗂 summary · "

@@ -59,10 +59,20 @@ class SessionHistoryTest {
     }
 
     @Test fun `oversized content trims to the watch cap with ellipsis`() {
-        val big = """{"messages":[{"role":"assistant","content":"${"x".repeat(5000)}","ts":1}]}"""
+        val big = """{"messages":[{"role":"assistant","content":"${"x".repeat(SessionHistory.MAX_TEXT + 500)}","ts":1}]}"""
         val msg = SessionHistory.parse(big).single()
-        assertEquals(SessionHistory.MAX_TEXT + 1, msg.text.length) // 2000 chars + the … marker
+        assertEquals(SessionHistory.MAX_TEXT + 1, msg.text.length) // cap chars + the … marker
         assertTrue(msg.text.endsWith("…"))
+    }
+
+    @Test fun `a long chat answer survives backfill whole — the 2 KB clamp bug (owner)`() {
+        // The owner's complaint: pages-long replies came back ending in "…". Anything up to the
+        // 20 KB wall must now arrive UNCLIPPED — 6 KB is a very real essay.
+        val essay = "行".repeat(6_000) // CJK: worst case for byte-minded caps, fine for char caps
+        val json = """{"messages":[{"role":"assistant","content":"$essay","ts":1}]}"""
+        val msg = SessionHistory.parse(json).single()
+        assertEquals(6_000, msg.text.length)
+        assertFalse(msg.text.endsWith("…"))
     }
 
     @Test fun `empty and malformed payloads — missing key parses empty junk throws`() {
