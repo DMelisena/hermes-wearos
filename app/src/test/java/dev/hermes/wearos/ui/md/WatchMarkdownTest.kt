@@ -13,6 +13,52 @@ class WatchMarkdownTest {
 
     private fun plainSpans(text: String) = listOf(MdSpan.Plain(text))
 
+    // ── clickable links (owner: "URL links … should be clickable") ──────────────────────────
+
+    @Test fun `markdown link parses to a Link span`() {
+        val p = WatchMarkdown.parse("see [docs](https://x.dev/a) ok")[0] as MdBlock.Paragraph
+        assertEquals(
+            listOf(
+                MdSpan.Plain("see "),
+                MdSpan.Link("https://x.dev/a", listOf(MdSpan.Plain("docs"))),
+                MdSpan.Plain(" ok"),
+            ),
+            p.spans,
+        )
+    }
+
+    @Test fun `bare URL autolinks and the sentence dot is not part of it`() {
+        val p = WatchMarkdown.parse("read https://a.b/c. done")[0] as MdBlock.Paragraph
+        assertEquals(
+            listOf(
+                MdSpan.Plain("read "),
+                MdSpan.Link("https://a.b/c", listOf(MdSpan.Plain("https://a.b/c"))),
+                MdSpan.Plain(". done"),
+            ),
+            p.spans,
+        )
+    }
+
+    @Test fun `link keeps inner styling and code beats links`() {
+        val bold = WatchMarkdown.parse("**[hi](https://z)**")[0] as MdBlock.Paragraph
+        assertEquals(listOf(MdSpan.Bold(listOf(MdSpan.Link("https://z", listOf(MdSpan.Plain("hi")))))), bold.spans)
+        val code = WatchMarkdown.parse("`[a](https://x)`")[0] as MdBlock.Paragraph
+        assertEquals(listOf(MdSpan.InlineCode("[a](https://x)")), code.spans)
+    }
+
+    @Test fun `unclosed partial and non-web targets stay literal`() {
+        // Stream-partial `[docs](https://x` mid-token must render the raw text, never a half-link.
+        for (raw in listOf("see [docs](https://x", "[a] b", "[x](not a url)", "[local](/p/x)")) {
+            val p = WatchMarkdown.parse(raw)[0] as MdBlock.Paragraph
+            assertTrue(raw, p.spans.all { it is MdSpan.Plain })
+        }
+    }
+
+    @Test fun `autolink never fires mid-word`() {
+        val p = WatchMarkdown.parse("xhttp://a.b")[0] as MdBlock.Paragraph
+        assertEquals(listOf(MdSpan.Plain("xhttp://a.b")), p.spans)
+    }
+
     @Test fun headingsLevels() {
         val blocks = WatchMarkdown.parse("# One\n## Two\n### Three\n#### Four")
         assertEquals(
@@ -39,6 +85,20 @@ class WatchMarkdownTest {
                 MdSpan.Plain(" and "),
                 MdSpan.InlineCode("inline"),
                 MdSpan.Plain("."),
+            ),
+            p.spans,
+        )
+    }
+
+    @Test fun underscoreEmphasisAndSnakeCase() {
+        val p = WatchMarkdown.parse("Peak _aurora NO_ tonight, see __the map__ (file my_var_name here).")[0] as MdBlock.Paragraph
+        assertEquals(
+            listOf(
+                MdSpan.Plain("Peak "),
+                MdSpan.Italic(listOf(MdSpan.Plain("aurora NO"))),
+                MdSpan.Plain(" tonight, see "),
+                MdSpan.Bold(listOf(MdSpan.Plain("the map"))),
+                MdSpan.Plain(" (file my_var_name here)."),
             ),
             p.spans,
         )
@@ -86,6 +146,22 @@ class WatchMarkdownTest {
         val blocks = WatchMarkdown.parse("Look:\n\n![red square](/home/user/.hermes/red.png)\n\nafter")
         assertEquals(3, blocks.size)
         assertEquals(MdBlock.Image("red square", "/home/user/.hermes/red.png"), blocks[1])
+    }
+
+    @Test fun mediaAttachmentLineBecomesImageBlockNamedByFile() {
+        // The gateway/skill convention (`MEDIA:/abs/path`) — how the aurora renders arrive.
+        val text = "Maps attached.\n\nMEDIA: /home/user/.hermes/profiles/wear-demo/cache/scratch/aurora/aurora_map.png\n"
+        val blocks = WatchMarkdown.parse(text)
+        assertEquals(2, blocks.size)
+        assertEquals(
+            MdBlock.Image("aurora_map.png", "/home/user/.hermes/profiles/wear-demo/cache/scratch/aurora/aurora_map.png"),
+            blocks[1],
+        )
+    }
+
+    @Test fun partialMediaLineStaysParagraph() {
+        // Mid-stream the line is still arriving; it must not flash as a broken card.
+        assertTrue(WatchMarkdown.parse("MEDIA: /home/user/.hermes/aur")[0] is MdBlock.Paragraph)
     }
 
     @Test fun imageEmptyAltAndHttpTarget() {

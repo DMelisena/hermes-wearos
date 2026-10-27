@@ -9,6 +9,7 @@ import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.graphics.drawable.toBitmap
 import dev.hermes.wearos.MainActivity
 import dev.hermes.wearos.R
 import dev.hermes.wearos.domain.ApprovalInfo
@@ -53,7 +54,11 @@ object Notifs {
     /** Background-settle notification: tap deep-links into the chat's transcript. */
     fun settle(app: Context, chatId: String, label: String, answer: String, error: Boolean) {
         val text = if (error) "⚠ failed" else answer.replace('\n', ' ').trim().take(SNIPPET)
-        post(app, settleId(chatId), CHANNEL_SETTLE, titleFor(label), text, openChatIntent(app, chatId))
+        val n = base(app, CHANNEL_SETTLE, titleFor(label), text)
+            .setContentIntent(openChatIntent(app, chatId))
+            .addAction(R.drawable.ic_stat_hermes, "Open session", openChatIntent(app, chatId))
+            .build()
+        notify(app, settleId(chatId), n)
     }
 
     /** Approval-waiting notification with inline Approve / Deny. */
@@ -62,6 +67,7 @@ object Notifs {
             .setContentIntent(openChatIntent(app, chatId))
             .addAction(R.drawable.ic_stat_hermes, "Approve", responseIntent(app, ACTION_APPROVE, info.runId))
             .addAction(R.drawable.ic_stat_hermes, "Deny", responseIntent(app, ACTION_DENY, info.runId))
+            .addAction(R.drawable.ic_stat_hermes, "Open session", openChatIntent(app, chatId))
         notify(app, approvalId(info.runId), b.build())
     }
 
@@ -101,12 +107,24 @@ object Notifs {
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
-    private fun post(app: Context, id: Int, channel: String, title: String, text: String, tap: PendingIntent) =
-        notify(app, id, base(app, channel, title, text).setContentIntent(tap).build())
+    /** The orb spirit on a black disc (drawable-nodpi) — the expanded card shows the real orb.
+     *  Decoded once, lazily: webp is small, but a bitmap per post on a watch is still silly. */
+    private var largeIcon: android.graphics.Bitmap? = null
+    private fun orbLargeIcon(app: Context): android.graphics.Bitmap? {
+        largeIcon?.let { return it }
+        return try {
+            val d = androidx.core.content.ContextCompat.getDrawable(app, R.drawable.ic_notif_large)
+                ?: return null
+            d.toBitmap(288, 288).also { largeIcon = it }
+        } catch (e: Exception) {
+            Log.w(TAG, "notif large icon unavailable: $e"); null
+        }
+    }
 
     private fun base(app: Context, channel: String, title: String, text: String) =
         NotificationCompat.Builder(app, channel)
-            .setSmallIcon(R.drawable.ic_stat_hermes)
+            .setSmallIcon(R.drawable.ic_stat_hermes) // orb-spirit silhouette (white stencil, system tints)
+            .setLargeIcon(orbLargeIcon(app))
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))

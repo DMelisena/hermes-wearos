@@ -2,6 +2,7 @@ package dev.hermes.wearos.domain
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -48,5 +49,17 @@ class ChatAnchorTest {
 
     @Test fun `negative message counts can't underflow the index`() {
         assertEquals(0, ChatAnchor.bottomIndex(-5))
+    }
+
+    // ── QUESTION PIN (owner batch 7: "scroll the viewport up a little so you can actually
+    // see what the question was and the information come back") ──
+    @Test fun `the question row is the last user message shifted past the header`() {
+        // Rows: header · messages · (approval/live/status). User message index i → row i+1.
+        assertEquals(1, ChatAnchor.questionRow(0))
+        assertEquals(3, ChatAnchor.questionRow(2))
+    }
+
+    @Test fun `no user turn means no pin target - the caller keeps the bottom anchor`() {
+        assertNull(ChatAnchor.questionRow(-1))
     }
 }

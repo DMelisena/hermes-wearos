@@ -100,11 +100,47 @@ class WearApp : Application() {
         val devViewerScale = MutableStateFlow<Float?>(null)
 
         /**
+         * Dev hook `-e dial_preview`: pins the DIAL RING open (armed, no finger) so a screenshot
+         * can show the 8 slots — `adb input swipe` injects one interpolated MOVE at stroke END,
+         * so an adb-driven drag never keeps the ring up long enough to capture (a real finger
+         * streams continuously). true = ring visible; the cluster auto-clears it after ~8 s.
+         */
+        val devDialPreview = MutableStateFlow(false)
+
+        /**
+         * Dev hook `-e model_picker`: opens the 🧠 MODEL PICKER on the active chat — same reason
+         * dial_preview exists: a synthetic dial release is flaky to script, and the picker needs
+         * gateway round-trips a screenshot pass wants to wait on.
+         */
+        val devModelPicker = MutableStateFlow(false)
+
+        /** Dev hook `-e search <q>`: types a query into the Sessions search the way a thumb
+         *  would (adb `input text` can't traverse the Wear IME), then one-shot clears itself. */
+        val devSearchQuery = MutableStateFlow<String?>(null)
+
+        /** Dev hook `-e open_chat <id>`: opens that chat AND lands the UI on it (the screen
+         *  switch is what `-e open_chat` alone never did — the catch-up proof needs it visible). */
+        val devOpenChat = MutableStateFlow<String?>(null)
+
+        /** Dev hook `-e screen <chat|chats|settings|sessions>`: jump the UI to a screen. The ⌘
+         *  overlay popup swallows injected touches (adb taps never focus its search field), so
+         *  demo drives need this to reach Settings/Chats deterministically. */
+        val devScreen = MutableStateFlow<String?>(null)
+
+        /**
          * Dev hook (`-e open_editor "text"`): opens the prompt editor prefilled — the system
          * keyboard proof for owner batch 2 (works over adb on the physical watch, no tap needed).
          * MainActivity consumes (nulls it back after opening).
          */
         val devEditor = MutableStateFlow<String?>(null)
+
+        /**
+         * DEV RENDER HARNESS (SPEC §13.3): `-e render <case>` → the case id, consumed by the chat
+         * screen, which injects the canned answer (`RenderCase`) straight into the transcript.
+         * Proves the 5-column grid / viewer / mermaid / PDF / link surfaces over adb + screencap
+         * without asking a model five times. `-e render list` echoes the ids in logcat.
+         */
+        val devRender = MutableStateFlow<String?>(null)
 
         /**
          * MAIN-THREAD GATE for every UI callback (walkthrough crash, 2a32c65):
@@ -169,6 +205,10 @@ class WearApp : Application() {
                 scope.launch { speak.loadEnabled() }
                 scope.launch { settings.loadMarkdownRendering() } // Display ▸ markdown (F3 default ON)
                 scope.launch { settings.loadFontScale() } // pinch font-scale (Layout D epic)
+                scope.launch { settings.loadOrbSlots() } // the dial map (SPEC §12.1) — chat reads the mirror
+                scope.launch { settings.loadAgentKeys() } // per-agent gateway keys (SPEC §12.2)
+                scope.launch { settings.loadCommandUsage() } // slash-overlay recents (SPEC §12.3)
+                scope.launch { settings.loadSlashCatalog() } // pushed command catalog, if any
                 scope.launch { settings.loadBodyTools() } // W1-W4: body switches (all default OFF)
                 scope.launch { Watchkit.setConfig(settings.mermaidBaseUrl(), settings.watchkitToken()) } // F4/watchkit
                 agents = AgentsRepo(settings)
@@ -302,6 +342,24 @@ class WearApp : Application() {
         /** Dev-only (adb `-e gw_select <id>`): select + forced re-probe (screenshot-free proof). */
         fun devGwSelect(id: String) = selectGateway(id) { ok, label, err ->
             Log.i(TAG, "gw_select ok=$ok id=$id label='$label' err=$err")
+        }
+
+        /** Dev-only (adb `-e add_gw "label|api|watchkit"`): upsert a gateway carrying the current
+         *  token + per-agent keys so a second endpoint is immediately usable (demo shots, §11). */
+        fun devAddGateway(spec: String) = scope.launch {
+            val bits = spec.split('|').map { it.trim() }
+            if (bits.size < 3) { Log.i(TAG, "add_gw BAD spec '$spec'"); return@launch }
+            val base = settings.gateways().firstOrNull()
+            val gw = dev.hermes.wearos.domain.Gateway(
+                id = bits[0].lowercase().replace(Regex("[^a-z0-9]"), ""),
+                label = bits[0],
+                apiEndpoints = listOf(bits[1]),
+                watchkitEndpoints = listOf(bits[2]),
+                token = settings.token(),
+                agentKeys = base?.agentKeys.orEmpty(),
+            )
+            settings.saveGateway(gw, select = false)
+            Log.i(TAG, "add_gw ok '${gw.label}' api=${bits[1]}")
         }
 
         /** Dev-only (adb `-e gw_probe`): force the failover probe round; winner goes to logcat. */

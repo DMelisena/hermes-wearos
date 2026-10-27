@@ -10,6 +10,14 @@ sealed interface MdSpan {
     data class Bold(val children: List<MdSpan>) : MdSpan
     data class Italic(val children: List<MdSpan>) : MdSpan
     data class InlineCode(val text: String) : MdSpan
+
+    /**
+     * Clickable link (owner: "URL links … should be clickable … open whatever browser is default
+     * on my watch"). http(s)/mailto only — a gateway-local `/path` isn't a browser target, and
+     * the F6 image path stays image-card territory. [url] is the RAW target; [children] keep the
+     * label's inline styling (a bold link label stays bold).
+     */
+    data class Link(val url: String, val children: List<MdSpan>) : MdSpan
 }
 
 /** Block-level nodes (SPEC §5 F3). One node ≈ one composable row on the watch list. */
@@ -75,6 +83,10 @@ object WatchMarkdown {
     // Image-only line; optional "title"/'title' after the path is dropped. No spaces in target
     // (gateway paths are plain absolute paths); anything fancier stays literal paragraph text.
     private val IMAGE_LINE = Regex("^\\s*!\\[([^\\]]*)\\]\\(\\s*([^()\\s]+)(?:\\s+[\"'][^\"']*[\"'])?\\s*\\)\\s*$")
+
+    /** `MEDIA:/abs/path` — the gateway/skill attachment line convention (aurora/weather charts).
+     *  Only fires once the extension is fully on screen, so a mid-stream partial stays text. */
+    private val MEDIA_LINE = Regex("^\\s*MEDIA:\\s*(\\S+\\.(?:png|jpe?g|webp|gif))\\s*$", RegexOption.IGNORE_CASE)
 
     fun parse(text: String): List<MdBlock> {
         val lines = text.replace("\r\n", "\n").replace('\r', '\n').replace("\t", "    ").split('\n')
@@ -191,6 +203,16 @@ object WatchMarkdown {
                 i++; continue
             }
 
+            // Gateway attachment convention: a bare `MEDIA:/abs/path` line from a skill (the
+            // aurora/weather renders speak this). Same card as ![](), alt = file name.
+            val med = MEDIA_LINE.matchEntire(line)
+            if (med != null) {
+                flushPara()
+                val p = med.groupValues[1]
+                out += MdBlock.Image(p.substringAfterLast('/'), p)
+                i++; continue
+            }
+
             para += line; i++
         }
         flushPara()
@@ -211,7 +233,15 @@ object WatchMarkdown {
     private fun cellsOf(line: String): List<String> =
         line.trim().trimStart('|').trimEnd('|').split('|').map { it.trim() }
 
-    // ---- inline pass: **bold**, *italic*, `code`; anything unterminated stays literal ----
+    // ---- inline pass: **bold**, *italic*, `code`, [label](url), bare https://…; unterminated stays literal ----
+
+    /** Bare-URL autolink scan (owner: URLs must be clickable). Deliberately conservative: no
+     *  fragment runs with trailing punctuation (a sentence-ending dot is not part of the link). */
+    private val BARE_URL = Regex("""https?://[^\s<>"'\[\]\u4e00-\u9fff，。；！？]+""")
+    private val TRAILING_PUNCT = ".,;:!?*"
+
+    private fun isWebUrl(url: String): Boolean =
+        url.startsWith("http://") || url.startsWith("https://") || url.startsWith("mailto:")
 
     internal fun parseInline(text: String): List<MdSpan> {
         if (text.isEmpty()) return emptyList()
@@ -230,6 +260,33 @@ object WatchMarkdown {
                 }
                 buf.append(c); i++; continue // lone backtick: literal
             }
+            // [label](url) — a malformed/unclosed/odd-scheme link renders as the plain text it is.
+            if (c == '[') {
+                val close = text.indexOf(']', i + 1)
+                val open = if (close > i + 1 && close + 1 < text.length && text[close + 1] == '(') close + 2 else -1
+                val end = if (open > 0) text.indexOf(')', open) else -1
+                if (end > open) {
+                    val label = text.substring(i + 1, close)
+                    val url = text.substring(open, end).trim()
+                    if (isWebUrl(url)) {
+                        flush(); spans += MdSpan.Link(url, parseInline(label)); i = end + 1; continue
+                    }
+                }
+                buf.append(c); i++; continue
+            }
+            // Bare URL autolink, only at a word boundary (never the tail of "xhttp://…"), and
+            // never right after "(" — that is markdown's own [label](url) shape, partial
+            // includes: a stream-cut "[label](https…" must stay literal, not half-link.
+            if (c == 'h' && (i == 0 || !text[i - 1].let { it.isLetterOrDigit() || it in "/?.=&%_:(" })) {
+                val m = BARE_URL.find(text, i)
+                if (m != null && m.range.first == i) {
+                    var url = m.value
+                    while (url.isNotEmpty() && url.last() in TRAILING_PUNCT) url = url.dropLast(1)
+                    if (url.isNotEmpty()) {
+                        flush(); spans += MdSpan.Link(url, listOf(MdSpan.Plain(url))); i += url.length; continue
+                    }
+                }
+            }
             if (c == '*' && text.startsWith("**", i)) {
                 val close = text.indexOf("**", i + 2)
                 if (close > i + 2) {
@@ -241,6 +298,26 @@ object WatchMarkdown {
                 val close = text.indexOf('*', i + 1)
                 if (close > i + 1 && close + 1 < text.length && text[close + 1] != '*' && !text[close - 1].isWhitespace()) {
                     flush(); spans += MdSpan.Italic(parseInline(text.substring(i + 1, close))); i = close + 1; continue
+                }
+                buf.append(c); i++; continue
+            }
+            // Underscore emphasis (models default to _this_ far more than *this*): guarded so
+            // snake_case survives — opening `_` must not hug a letter, closing `_` likewise.
+            if (c == '_' && !buf.lastOrNull().let { it != null && it.isLetterOrDigit() }) {
+                if (text.startsWith("__", i) && !text.startsWith("___", i)) {
+                    val close = text.indexOf("__", i + 2)
+                    if (close > i + 2) {
+                        flush(); spans += MdSpan.Bold(parseInline(text.substring(i + 2, close))); i = close + 2; continue
+                    }
+                    buf.append("__"); i += 2; continue
+                }
+                if (i + 1 < text.length && text[i + 1] != '_' && !text[i + 1].isWhitespace()) {
+                    val close = text.indexOf('_', i + 1)
+                    if (close > i + 1 && !text[close - 1].isWhitespace() &&
+                        !(close + 1 < text.length && text[close + 1].isLetterOrDigit())
+                    ) {
+                        flush(); spans += MdSpan.Italic(parseInline(text.substring(i + 1, close))); i = close + 1; continue
+                    }
                 }
                 buf.append(c); i++; continue
             }

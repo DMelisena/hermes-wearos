@@ -3,7 +3,7 @@
 #
 #   scripts/setup.sh [--dry-run] [--config FILE] [--serial SERIAL] [--skip-build] [--no-device]
 #                    [--gateway-label L] [--api URL]... [--watchkit URL]...
-#                    [--token T] [--watchkit-token T] [--install-soul]
+#                    [--token T] [--watchkit-token T] [--install-soul] [--agent-keys]
 #
 # Reads watchos.config.json (cp watchos.config.example.json first); flags override config.
 # Flow: build APK → install on the watch (chunked+md5-verified push for wireless devices) →
@@ -44,6 +44,7 @@ while [ $# -gt 0 ]; do
     --api)            APIS+=("$2"); shift ;;
     --watchkit)       WKS+=("$2"); shift ;;
     --token)          TOKEN="$2"; shift ;;
+    --agent-keys)     AGENT_KEYS=1 ;;
     --watchkit-token) WK_TOKEN="$2"; shift ;;
     --skip-build)     SKIP_BUILD=1 ;;
     --no-device)      NO_DEVICE=1 ;;
@@ -204,6 +205,20 @@ if [ "$NO_DEVICE" = 0 ]; then
   i=$(( ${#WKS[@]} - 1 ))
   while [ "$i" -ge 0 ]; do broadcast set_watchkit_base "${WKS[$i]}"; i=$((i-1)); done
   [ -n "$TOKEN" ]    && broadcast set_token "$TOKEN"
+  # --agent-keys (SPEC §12.2): a multiplexed gateway resolves API_SERVER_KEY PER PROFILE, so one
+  # token only works for the profile it came from. When the gateway lives on THIS box we can read
+  # every profiles/<p>/.env and push the whole map — otherwise "switch agent" 401s on every agent
+  # that lacks a key (and /v1/health, being unauthenticated, never warns you).
+  if [ "${AGENT_KEYS:-0}" = "1" ]; then
+    for envf in "$HOME"/.hermes/profiles/*/.env; do
+      [ -f "$envf" ] || continue
+      prof="$(basename "$(dirname "$envf")")"
+      akey="$(grep '^API_SERVER_KEY=' "$envf" 2>/dev/null | cut -d= -f2- | tr -d '\"'"'"'"' || true)"
+      [ -n "$akey" ] || continue
+      echo "  agent key: $prof"
+      broadcast set_agent_key "${prof}=${akey}"
+    done
+  fi
   [ -n "$WK_TOKEN" ] && broadcast set_watchkit "$WK_TOKEN"
   plan "${ADB_X[*]} shell am start -n $PKG/.MainActivity"
   [ "$DRY" = 1 ] || "${ADB_X[@]}" shell am start -n "$PKG/.MainActivity" >/dev/null

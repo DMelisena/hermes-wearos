@@ -35,6 +35,13 @@ data class ChatMeta(
     val pendingAttention: Boolean = false,
     /** Gateway agent (profile) this chat belongs to (owner ask #1). Legacy entries default `wear`. */
     val profile: String = "wear",
+    /**
+     * Model picked for THIS chat from the gateway's enabled catalog (SPEC §12.7, orb 🧠 lane):
+     * sent as the run `model` on every ask here, so the choice outlives restarts. `""` = never
+     * picked — the gateway default answers, and the session's own stamped model (adopted from
+     * `GET /api/sessions/{id}`) fills in for adopted/continued sessions.
+     */
+    val model: String = "",
 )
 
 /**

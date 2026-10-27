@@ -118,6 +118,418 @@ function listAgents() {
   return agents;
 }
 
+// ── command catalog (the watch's ⌘ / 6:00 dial overlay) ────────────────────
+// The watch's slash overlay must never pretend the Runs API dispatches slash commands (it does
+// not: `POST /v1/runs` turns `input` into a MODEL message), so every row declares `honored` =
+// what the WATCH does with it. Rows come from one place and one place only on this box:
+//   <watchkit>/command_catalog.json  — optional, operator-authored, hot-reloaded per request
+//     {"commands":[{"name":"steer","args":"your guidance","desc":"inject into the run in flight",
+//                  "honored":"steer","group":"commands","requires":"run_steer","source":"gateway"}],
+//      "capabilities":{"run_steer":true}}
+// With no file we answer with the DEFAULT_ROWS below, so a fresh watchkit still lights the overlay
+// up with real rows instead of nothing. Capability FLAGS are NOT guessed here: the watch reads
+// `GET /p/<agent>/v1/capabilities` itself (it holds that profile's key) and dims rows from the
+// truth — watchkit never claims a feature it cannot see. Skill rows ride the same response:
+// watchkit reads `state.db` for profiles the watch has no key for, so `GET /catalog?profile=x`
+// returns that agent's SKILLs too (from its skills/ dir), which is why the watch needs no
+// skills endpoint of its own.
+const CATALOG_PATH = process.env.WATCHKIT_CATALOG || path.join(WK_DIR, 'command_catalog.json');
+const SKILL_ROW_CAP = Number(process.env.WATCHKIT_SKILL_CAP || 120); // overlay caps the view too
+const DEFAULT_ROWS = [
+  { name: 'steer', args: 'your guidance', desc: 'inject guidance into the run in flight', honored: 'steer', group: 'commands', requires: 'run_steer' },
+  { name: 'stop', desc: 'stop the run in flight', honored: 'stop', group: 'commands', requires: 'run_stop' },
+  { name: 'btw', args: 'aside', desc: 'side conversation in a fork — keeps this thread clean', honored: 'side', group: 'commands', requires: 'session_fork' },
+  { name: 'fork', desc: 'branch this session and continue there', honored: 'fork', group: 'commands', requires: 'session_fork' },
+  { name: 'model', desc: 'change the model for this session', honored: 'model', group: 'commands', requires: 'model_options' },
+  { name: 'compact', desc: 'compress context (asked as a prompt — the gateway decides)', honored: 'prompt', group: 'commands' },
+  { name: 'status', desc: 'gateway + watchkit health, right now', honored: 'status', group: 'client' },
+  { name: 'sessions', desc: 'gateway/computer sessions', honored: 'client', group: 'client' },
+  { name: 'chats', desc: 'local chats for this agent', honored: 'client', group: 'client' },
+  { name: 'agents', desc: 'switch agent', honored: 'client', group: 'client' },
+  { name: 'new', desc: 'start a fresh chat', honored: 'client', group: 'client' },
+  { name: 'settings', desc: 'settings', honored: 'client', group: 'client' },
+];
+
+function skillRows(profile) {
+  // <profile>/skills/<name>/SKILL.md → a slash row. Same shape the desktop sidebar lists; a
+  // missing/odd dir is simply no rows (a gateway without skills must not look broken).
+  const dir = path.join(PROFILES_DIR, profile === 'default' ? '' : profile, 'skills');
+  const out = [];
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return out; }
+  for (const name of names.sort()) {
+    if (name.startsWith('.')) continue;
+    try {
+      const md = path.join(dir, name, 'SKILL.md');
+      if (!fs.existsSync(md)) continue;
+      const head = fs.readFileSync(md, 'utf8').slice(0, 4000);
+      const fm = /^---\n([\s\S]*?)\n---/.exec(head);
+      const desc = fm && /(?:^|\n)description:\s*(.+)/.exec(fm[1]);
+      out.push({
+        name: name.replace(/\s+/g, '-').toLowerCase(),
+        args: '',
+        desc: (desc ? desc[1] : '').replace(/^["']|["']$/g, '').slice(0, 140),
+        honored: 'skill', group: 'skills', source: profile,
+      });
+    } catch { /* skip unreadable skill dir */ }
+  }
+  return out;
+}
+
+async function handleCatalog(req, res, ip, params) {
+  const profile = String(params.profile || 'default').replace(/[^a-z0-9_-]/gi, '').slice(0, 40) || 'default';
+  let commands = DEFAULT_ROWS, caps = {};
+  try {
+    const raw = JSON.parse(fs.readFileSync(CATALOG_PATH, 'utf8'));
+    if (Array.isArray(raw.commands) && raw.commands.length) commands = raw.commands;
+    if (raw.capabilities && typeof raw.capabilities === 'object') caps = raw.capabilities;
+  } catch { /* no file / bad JSON: defaults answer, which is the point of shipping them */ }
+  // A profile with 200 skills must not deliver a 200-row menu: the watch shows the SKILLS section
+  // collapsed-until-filtered, and we cap the payload too (alphabetical, stable) so a huge skill
+  // dir can't turn a catalog fetch into a megabyte. `truncated` tells the watch to say so.
+  const skills = skillRows(profile);
+  const capped = skills.slice(0, SKILL_ROW_CAP);
+  const rows = commands.concat(capped);
+  const body = JSON.stringify({
+    commands: rows, capabilities: caps, profile,
+    skill_count: skills.length, truncated: skills.length > capped.length,
+  });
+  return done(res, send(res, 200, body), Date.now(), ip, 'catalog', 200, undefined, rows.length);
+}
+
+// ── agent keys (the multi-agent 401 fix, SPEC §12.2) ──────────────────────
+// A multiplexed Hermes gateway resolves API_SERVER_KEY PER PROFILE from the URL and fails CLOSED
+// for a named profile that has none: the wear token is a 401 on /p/research while /v1/health
+// (unauthenticated) keeps answering 200 — so the watch's Test button and endpoint failover both
+// look healthy for an agent that can do nothing. watchkit is the only component that can see the
+// truth, because it runs on the gateway box and reads the profile dotfiles:
+//   profiles/<p>/.env   → API_SERVER_KEY for <p>       (absent ⇒ that agent needs a key typed)
+//   ~/.env (or the home profile) → API_SERVER_KEY for `default`
+// Response (bearer-protected, tailnet/LAN-only port like every other route):
+//   {"agents":[{"profile":"wear","has_key":true,"key":"…"},{"profile":"research","has_key":false}],
+//    "source":{"default":"home-env"}}
+// Returning the KEYS is deliberate: this port is not public, the watch needs them to sign requests
+// per profile, and "switch agent, get a 401, type 64 hex chars on a watch" is not a workflow.
+// `has_key:false` is the honest answer the UI shows instead of a mystery error.
+function readEnvKey(file) {
+  try {
+    const txt = fs.readFileSync(file, 'utf8');
+    const m = /^API_SERVER_KEY=["']?([^"'\n]+)["']?$/m.exec(txt);
+    return m ? m[1].trim() : '';
+  } catch { return ''; }
+}
+
+function agentKeys() {
+  const out = [];
+  // The `default` profile's env is the HERMES_HOME one (~/.hermes/.env) — same rule openStore
+  // uses for its state.db. `~/.env` was a wrong guess: it made the biggest store report no key.
+  const homeKey = readEnvKey(path.join(HERMES_HOME, '.env'));
+  for (const profile of listAgents()) {
+    const key = profile === 'default'
+      ? (readEnvKey(path.join(PROFILES_DIR, 'default', '.env')) || homeKey)
+      : readEnvKey(path.join(PROFILES_DIR, profile, '.env'));
+    out.push({ profile, has_key: !!key, key });
+  }
+  return out;
+}
+
+async function handleAgentKeys(req, res, ip) {
+  const agents = agentKeys();
+  const withKey = agents.filter((a) => a.has_key).length;
+  const body = JSON.stringify({ agents, source: 'profiles-env' });
+  return done(res, send(res, 200, body), Date.now(), ip, 'agent_keys', 200, undefined, withKey);
+}
+
+// ── /search (session search over the profile's FTS index, SPEC §12.4) ───────
+// The owner's Sessions screen ask: "new session plus a tap-to-search box" — searchable across
+// every chat this agent ever had, not just the 20 rows /sessions lists. The store already carries
+// a maintained FTS5 index (`messages_fts`, triggers keep it in step with `messages`), so search is
+// a MATCH + join at ~ms on a 900 MB store — no scan, no new index, no gateway round trip.
+//   GET /search?profile=<p>&q=<words>&limit=8
+//   {"object":"list","profile":"wear","query":"orb dial","data":[
+//      {"id","title","last_active","message_count","profile","hits":3,"snippet":"…the orb dial
+//       wedges…","snippet_role":"user","title_match":true}]}
+// Snippet mechanics: FTS5 `snippet()` marks the hit with [brackets] — the watch shows that string
+// verbatim, which is how a wrist sees WHY a result matched. Words AND together, last word gets a
+// prefix star (`dial` → `dial*`) so typing mid-word already works; every token is quote-wrapped so
+// FTS operators inside the query can't throw syntax errors at us. Sessions the sidebar hides
+// (cron/tool/subagent noise, archived) are hidden here too — same visibility rules as /sessions,
+// one truth. If the profile has no store or FTS somehow isn't there, the answer is an empty list
+// (200), never a 500 the watch has to explain.
+const SEARCH_LIMIT_MAX = 12;
+
+function ftsQuery(q) {
+  // Words, FTS-safe: quote-wrap each token (internal quotes doubled), AND them, prefix the last.
+  const words = String(q || '').split(/\s+/).map((w) => w.replace(/"/g, '')).filter(Boolean).slice(0, 6);
+  if (!words.length) return '';
+  return words
+    .map((w, i) => `"${w}"${i === words.length - 1 ? '*' : ''}`)
+    .join(' AND ');
+}
+
+async function handleSearch(req, res, ip, params) {
+  const t0 = Date.now();
+  const profile = String(params.profile ?? 'default').trim() || 'default';
+  const q = String(params.q ?? '').trim().slice(0, 96);
+  const limit = Math.min(SEARCH_LIMIT_MAX, Math.max(1, Number(params.limit) || 8));
+  if (!SESSIONS_PROFILE_RE.test(profile))
+    return done(res, sendErr(res, 400, 'bad profile name'), t0, ip, 'search', 400);
+  const empty = JSON.stringify({ object: 'list', profile, query: q, data: [] });
+  const dbPath = sessionDbPath(profile);
+  if (!q || !dbPath || !fs.existsSync(dbPath))
+    return done(res, send(res, 200, empty), t0, ip, 'search', q ? 200 : 400, undefined, 0);
+  const match = ftsQuery(q);
+  let db;
+  try {
+    const { DatabaseSync } = await import('node:sqlite');
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    // Best-matching MESSAGES first (FTS rank), rolled up to sessions in JS: the wrist wants
+    // "which chat, and here is the line that matched" — one row per session, the single best
+    // snippet on it. LIKE over titles adds sessions whose NAME matches even when no message does.
+    const rows = db.prepare(`
+      SELECT s.id AS id, s.title AS title, s.message_count AS message_count,
+             COALESCE(s.last_activity_at, s.started_at) AS last_active,
+             m.role AS role,
+             snippet(messages_fts, 0, '[', ']', ' · ', 20) AS snippet,
+             rank AS rank
+      FROM messages_fts f
+      JOIN messages m ON m.id = f.rowid
+      JOIN sessions s ON s.id = m.session_id
+      WHERE messages_fts MATCH ?
+        AND s.hidden = 0 AND s.archived = 0
+        AND COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')
+        AND m.role IN ('user', 'assistant')
+      ORDER BY rank ASC
+      LIMIT 120
+    `).all(match);
+    const likeLike = `%${q.replace(/[%_]/g, '').slice(0, 48)}%`;
+    const titled = db.prepare(`
+      SELECT s.id AS id, 1 AS title_hit FROM sessions s
+      WHERE s.title LIKE ? AND s.hidden = 0 AND s.archived = 0
+        AND COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')
+      LIMIT 40
+    `).all(likeLike);
+    const titleHits = new Set(titled.map((r) => String(r.id)));
+    const bySession = new Map();
+    for (const r of rows) {
+      const id = String(r.id);
+      const hit = bySession.get(id);
+      if (hit) { hit.hits += 1; continue; } // first row per session = best rank = the snippet kept
+      bySession.set(id, {
+        id,
+        title: String(r.title ?? ''),
+        last_active: saneEpochSec(r.last_active),
+        message_count: Number(r.message_count) || 0,
+        profile,
+        hits: 1,
+        snippet: String(r.snippet ?? '').slice(0, 240),
+        snippet_role: String(r.role ?? ''),
+        title_match: titleHits.has(id),
+      });
+    }
+    // Title-named sessions with zero message hits still belong in the answer.
+    for (const id of titleHits) {
+      if (bySession.has(id)) continue;
+      const r = db.prepare(`
+        SELECT s.title AS title, s.message_count AS message_count,
+               COALESCE(s.last_activity_at, s.started_at) AS last_active
+        FROM sessions s WHERE s.id = ? LIMIT 1
+      `).get(id);
+      if (!r) continue;
+      bySession.set(id, {
+        id, title: String(r.title ?? ''), last_active: saneEpochSec(r.last_active),
+        message_count: Number(r.message_count) || 0, profile, hits: 0, snippet: '',
+        snippet_role: '', title_match: true,
+      });
+    }
+    // Rank: title match first (a chat NAMED what you typed beats a passing mention), then hit
+    // count, then recency. FTS rank order is already baked into which snippet we kept + insertion
+    // order for equal keys via the stable sort.
+    const data = [...bySession.values()]
+      .sort((a, b) =>
+        (b.title_match - a.title_match) ||
+        (b.hits - a.hits) ||
+        (b.last_active - a.last_active))
+      .slice(0, limit);
+    const body = JSON.stringify({ object: 'list', profile, query: q, data });
+    return done(res, send(res, 200, body), t0, ip, 'search', 200, undefined, data.length);
+  } catch (e) {
+    // No FTS table / busy store: empty beats error for a search box.
+    return done(res, send(res, 200, empty), t0, ip, 'search', 200, undefined, 0);
+  } finally {
+    try { db?.close(); } catch { /* already gone */ }
+  }
+}
+
+// ── session management (the watch's long-press menu: fork / delete) ─────────
+// The Sessions screen lets the owner hold a row and FORK it (branch into the CURRENT agent so the
+// watch can keep talking in the branch) or DELETE it (double-confirmed on the wrist). Why these
+// live here instead of riding the gateway API: the gateway DELETE only works for a profile whose
+// key the watch holds — and most profiles have none (SPEC §12.2) — while the desktop "computer"
+// chats live in the `default` store, which the watch can never sign for. watchkit runs beside
+// `state.db` and can write what it can read, so ONE uniform path works for every agent.
+//
+//   POST /session_fork   {profile, session_id, to_profile?, new_id, title?}
+//     → {object:"hermes.session.forked", id, profile, copied_messages, title}
+//   POST /session_delete {profile, session_id}
+//     → {object:"hermes.session.deleted", id, profile, deleted:true, messages:n}
+//
+// Fork copies session + messages column-wise (the INTERSECTION of source/target schemas, so a
+// version-skewed pair degrades instead of crashing), re-dates nothing, sets parent_session_id to
+// the origin (lineage the desktop already understands), suffixes the title " (fork)", and lands
+// the child hidden=0 archived=0 so it appears immediately. INSERTs flow through the store's own
+// FTS triggers, so the copy is searchable without anyone rebuilding an index. Cross-profile forks
+// ATTACH nothing: the source is read through its own handle and rows are inserted through the
+// target's — same fs, one busy_timeout each, no long-lived locks.
+//
+// Delete is a REAL delete (messages then session) — the watch double-confirms before calling, and
+// the FTS delete triggers keep the index honest. Sessions with a run in flight are the owner's own
+// risk (they just said "delete"); the store survives, a streaming watch run settles to an error.
+function dbCols(db, table) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+}
+
+async function openStore(profile, readOnly) {
+  const p = sessionDbPath(profile);
+  if (!p || !fs.existsSync(p)) return null;
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(p, readOnly ? { readOnly: true } : {});
+  db.exec('PRAGMA busy_timeout = 5000');
+  return db;
+}
+
+async function handleSessionFork(req, res, ip, body) {
+  const t0 = Date.now();
+  const profile = String(body.profile || 'default').trim();
+  const toProfile = String(body.to_profile || profile).trim();
+  const sessionId = String(body.session_id || '').trim();
+  const newId = String(body.new_id || '').trim();
+  if (!SESSIONS_PROFILE_RE.test(profile) || !SESSIONS_PROFILE_RE.test(toProfile))
+    return done(res, sendErr(res, 400, 'bad profile'), t0, ip, 'session_fork', 400);
+  if (!SESSION_ID_RE.test(sessionId) || !SESSION_ID_RE.test(newId))
+    return done(res, sendErr(res, 400, 'bad session id'), t0, ip, 'session_fork', 400);
+  let src = null, dst = null;
+  try {
+    src = await openStore(profile, true);
+    if (!src) return done(res, sendErr(res, 404, 'source store missing'), t0, ip, 'session_fork', 404);
+    const orig = src.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
+    if (!orig) return done(res, sendErr(res, 404, 'session not found'), t0, ip, 'session_fork', 404);
+    dst = await openStore(toProfile, false);
+    if (!dst) { // to-profile may be a never-booted agent — copying INTO a missing store is impossible here
+      return done(res, sendErr(res, 503, `target store missing for ${toProfile}`), t0, ip, 'session_fork', 503);
+    }
+    const clash = dst.prepare('SELECT 1 FROM sessions WHERE id = ?').get(newId);
+    if (clash) return done(res, sendErr(res, 409, 'that session id already exists'), t0, ip, 'session_fork', 409);
+    const sCols = dbCols(dst, 'sessions').filter((c) => c in orig);
+    const title = (String(body.title || '').trim() || `${String(orig.title || orig.id).slice(0, 70)} (fork)`);
+    // CROSS-STORE lineages don't exist: `sessions.parent_session_id` has a real FK to
+    // sessions.id IN THE SAME STORE (verified the constraint firing on node:sqlite). A desktop
+    // chat forked into the watch agent's store gets parent NULL — provenance lives in the
+    // " (fork)" title and the watch's own log; pretending otherwise 503s the whole copy.
+    const sameStore = sessionDbPath(profile) === sessionDbPath(toProfile);
+    const overrides = {
+      id: newId, title, archived: 0, auto_archived: 0, hidden: 0, pinned: 0,
+      ended_at: null, end_reason: null, parent_session_id: sameStore ? sessionId : null,
+    };
+    // Every FK column must resolve INSIDE the target store (verified live: the agent stores have
+    // `sessions.system_prompt_hash -> system_prompts.hash`, which the `default` store doesn't even
+    // carry as a constraint — a copied hash is a ghost there and node:sqlite enforces FKs ON by
+    // DEFAULT). parent_session_id is covered by `overrides`; the prompt hash by the drop below.
+    const dropCols = new Set(['parent_session_id']);
+    for (const fk of dst.prepare('PRAGMA foreign_key_list(sessions)').all()) {
+      if (fk.table === 'system_prompts') dropCols.add(fk.from);
+    }
+    const vals = sCols.map((c) => {
+      if (c in overrides) return overrides[c];
+      if (!sameStore && dropCols.has(c)) return null;
+      return orig[c];
+    });
+    dst.prepare(`INSERT INTO sessions (${sCols.map((c) => `"${c}"`).join(',')}) VALUES (${sCols.map(() => '?').join(',')})`)
+      .run(...vals);
+    // Messages: column intersection, fresh autoincrement ids, session re-pointed. The store's own
+    // triggers index the copies; `active`/`compacted` ride along so compaction state is faithful.
+    const dstMsgCols = dbCols(dst, 'messages');
+    const mShared = dbCols(src, 'messages').filter((c) => dstMsgCols.includes(c) && c !== 'id');
+    const rows = src.prepare(`SELECT ${mShared.map((c) => `"${c}"`).join(',')} FROM messages WHERE session_id = ? ORDER BY id`).all(sessionId);
+    let copied = 0;
+    if (rows.length) {
+      const ins = dst.prepare(`INSERT INTO messages (${mShared.map((c) => `"${c}"`).join(',')}) VALUES (${mShared.map(() => '?').join(',')})`);
+      dst.exec('BEGIN');
+      for (const r of rows) {
+        ins.run(...mShared.map((c) => (c === 'session_id' ? newId : r[c])));
+        copied += 1;
+      }
+      dst.exec('COMMIT');
+    }
+    const out = JSON.stringify({ object: 'hermes.session.forked', id: newId, profile: toProfile, from: sessionId, copied_messages: copied, title });
+    return done(res, send(res, 200, out), t0, ip, 'session_fork', 200, undefined, copied);
+  } catch (e) {
+    try { dst?.exec('ROLLBACK'); } catch { /* no txn */ }
+    return done(res, sendErr(res, 503, `fork failed: ${String(e?.message || e)}`.slice(0, 200)), t0, ip, 'session_fork', 503);
+  } finally {
+    try { src?.close(); } catch { /* gone */ }
+    try { dst?.close(); } catch { /* gone */ }
+  }
+}
+
+// ARCHIVE / UNARCHIVE (owner batch 5: "archive instead of delete" — desktop semantics): flip the
+// sessions.archived flag the sidebar and /sessions already filter on. Hide is the polite verb;
+// delete stays for the sure thing. A gone session answers 200 with changed:0 (idempotent like
+// delete), because the button means *get it off my list*, not *prove the row existed*.
+async function handleSessionArchive(req, res, ip, body) {
+  const t0 = Date.now();
+  const profile = String(body.profile || 'default').trim();
+  const sessionId = String(body.session_id || '').trim();
+  const archived = Number(body.archived ?? 1) ? 1 : 0;
+  if (!SESSIONS_PROFILE_RE.test(profile))
+    return done(res, sendErr(res, 400, 'bad profile'), t0, ip, 'session_archive', 400);
+  if (!SESSION_ID_RE.test(sessionId))
+    return done(res, sendErr(res, 400, 'bad session id'), t0, ip, 'session_archive', 400);
+  let db = null;
+  try {
+    db = await openStore(profile, false);
+    if (!db) return done(res, sendErr(res, 404, 'store missing'), t0, ip, 'session_archive', 404);
+    const r = db.prepare('UPDATE sessions SET archived = ? WHERE id = ?').run(archived, sessionId);
+    const out = JSON.stringify({ object: 'hermes.session.archived', id: sessionId, profile, archived: !!archived, changed: r.changes });
+    return done(res, send(res, 200, out), t0, ip, 'session_archive', 200, undefined, r.changes);
+  } catch (e) {
+    return done(res, sendErr(res, 503, `archive failed: ${String(e?.message || e)}`.slice(0, 200)), t0, ip, 'session_archive', 503);
+  } finally {
+    try { db?.close(); } catch { /* gone */ }
+  }
+}
+
+async function handleSessionDelete(req, res, ip, body) {
+  const t0 = Date.now();
+  const profile = String(body.profile || 'default').trim();
+  const sessionId = String(body.session_id || '').trim();
+  if (!SESSIONS_PROFILE_RE.test(profile))
+    return done(res, sendErr(res, 400, 'bad profile'), t0, ip, 'session_delete', 400);
+  if (!SESSION_ID_RE.test(sessionId))
+    return done(res, sendErr(res, 400, 'bad session id'), t0, ip, 'session_delete', 400);
+  let db = null;
+  try {
+    db = await openStore(profile, false);
+    if (!db) return done(res, sendErr(res, 404, 'store missing'), t0, ip, 'session_delete', 404);
+    const orig = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId);
+    if (!orig) {
+      // Already gone (deleted from the desktop meanwhile) is SUCCESS for a delete button.
+      return done(res, send(res, 200, JSON.stringify({ object: 'hermes.session.deleted', id: sessionId, profile, deleted: true, messages: 0 })), t0, ip, 'session_delete', 200, undefined, 0);
+    }
+    db.exec('BEGIN');
+    const n = db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId).changes;
+    db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+    db.exec('COMMIT');
+    const out = JSON.stringify({ object: 'hermes.session.deleted', id: sessionId, profile, deleted: true, messages: n });
+    return done(res, send(res, 200, out), t0, ip, 'session_delete', 200, undefined, n);
+  } catch (e) {
+    try { db?.exec('ROLLBACK'); } catch { /* no txn */ }
+    return done(res, sendErr(res, 503, `delete failed: ${String(e?.message || e)}`.slice(0, 200)), t0, ip, 'session_delete', 503);
+  } finally {
+    try { db?.close(); } catch { /* gone */ }
+  }
+}
+
 const STATE_DIR = path.join(WK_DIR, '.state');
 const SNAPSHOT_PATH = path.join(STATE_DIR, 'snapshot.json');
 const SNAPSHOT_MAX_BYTES = 256 * 1024;
@@ -470,13 +882,15 @@ async function handleSessions(req, res, ip, params) {
     db = new DatabaseSync(dbPath, { readOnly: true });
     // Desktop-sidebar semantics (web_routers/sessions.get_sessions defaults): archived + hidden out,
     // cron/tool/subagent noise out, compression continuations folded behind their root (the root's
-    // own recency is chain-maxed via message timestamps below).
+    // own recency is chain-maxed via message timestamps below). `?archived=1` INVERTS the archived
+    // term — the watch's 🗃 chip lists what the sidebar hides (same noise rules, same profile).
+    const wantArchived = String(params.archived ?? '0') === '1';
     const rows = db.prepare(`
       SELECT s.id AS id, s.title AS title, s.message_count AS message_count,
              s.started_at AS started_at, s.last_activity_at AS last_activity_at,
              (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id) AS msg_ts
       FROM sessions s
-      WHERE s.hidden = 0 AND s.archived = 0
+      WHERE s.hidden = 0 AND s.archived = ?
         AND COALESCE(s.source, '') NOT IN ('cron', 'tool', 'subagent')
         AND NOT (s.parent_session_id IS NOT NULL AND EXISTS (
           SELECT 1 FROM sessions p WHERE p.id = s.parent_session_id AND p.end_reason = 'compression'
@@ -484,13 +898,14 @@ async function handleSessions(req, res, ip, params) {
             AND json_extract(COALESCE(s.model_config, '{}'), '$._delegate_from') IS NULL))
       ORDER BY COALESCE(s.last_activity_at, s.started_at) DESC
       LIMIT ?
-    `).all(limit);
+    `).all(wantArchived ? 1 : 0, limit);
     const data = rows.map((r) => ({
       id: String(r.id),
       title: String(r.title ?? ''),
       last_active: Math.max(saneEpochSec(r.msg_ts), saneEpochSec(r.last_activity_at), saneEpochSec(r.started_at)),
       message_count: Number(r.message_count) || 0,
       profile,
+      ...(wantArchived ? { archived: true } : {}),
     })).sort((a, b) => b.last_active - a.last_active);
     const body = JSON.stringify({ object: 'list', data, profile, limit, offset: 0, has_more: false });
     return done(res, send(res, 200, body), t0, ip, 'sessions', 200, undefined, data.length);
@@ -511,7 +926,9 @@ async function handleSessions(req, res, ip, params) {
 // content, compression-summary rows kept as role "summary", process/system display_kinds
 // dropped. NEWEST [limit] rows, returned oldest-first (a 300-msg chat opens on its tail).
 const MSGS_LIMIT_MAX = 120;
-const MSGS_CONTENT_MAX = 2000; // a watch can't render a 50 KB wall — cap each message server-side
+// Owner: "long replies are getting cut off — we need the full replies." The old 2 KB wall ate
+// every real answer. 20 KB renders any honest chat turn in full and still refuses a log dump.
+const MSGS_CONTENT_MAX = 20_000;
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
 
 async function handleSessionMessages(req, res, ip, params) {
@@ -609,6 +1026,28 @@ const server = http.createServer(async (req, res) => {
       return done(res, send(res, 200, JSON.stringify({ agents })), t0, ip, 'agents', 200, undefined, agents.length);
     }
     // Cross-profile sessions for the watch's Sessions screen (owner: continue computer chats).
+    // Session management for the watch's long-press menu (SPEC §12.4 follow-up): fork any session
+    // into the current agent, delete any session. Bearer-guarded like every other route.
+    if (req.method === 'POST' && (url === '/session_fork' || url === '/session_delete' || url === '/session_archive')) {
+      let q;
+      try { q = JSON.parse((await readBody(req, JSON_MAX_BYTES)).toString('utf8')); }
+      catch { return done(res, sendErr(res, 400, 'bad json body'), Date.now(), ip, url.slice(1), 400); }
+      if (url === '/session_fork') return await handleSessionFork(req, res, ip, q);
+      if (url === '/session_archive') return await handleSessionArchive(req, res, ip, q);
+      return await handleSessionDelete(req, res, ip, q);
+    }
+    // Full-text session search for the watch's Sessions screen (SPEC §12.4).
+    if (req.method === 'GET' && url === '/search') {
+      const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
+      return await handleSearch(req, res, ip, q);
+    }
+    // Per-profile gateway keys so the watch can sign requests for ANY agent (SPEC §12.2).
+    if (req.method === 'GET' && url === '/agent_keys') return await handleAgentKeys(req, res, ip);
+    // Slash-command catalog for the watch's ⌘ overlay (SPEC §12.3). Bearer like every endpoint.
+    if (req.method === 'GET' && url === '/catalog') {
+      const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
+      return await handleCatalog(req, res, ip, q);
+    }
     if (req.method === 'GET' && url === '/sessions') {
       const q = Object.fromEntries(new URL(req.url, 'http://watchkit').searchParams);
       return await handleSessions(req, res, ip, q);

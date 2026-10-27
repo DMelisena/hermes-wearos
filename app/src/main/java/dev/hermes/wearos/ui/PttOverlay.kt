@@ -83,7 +83,7 @@ fun PttOverlay(
                     Text("🎤", style = MaterialTheme.typography.caption3)
                 }
                 Text(
-                    if (handsFree) "hands-free · pause sends" else "hold to talk",
+                    if (handsFree) "tap orb again · pause sends" else "listening",
                     style = MaterialTheme.typography.caption3,
                     color = MaterialTheme.colors.onBackground.copy(alpha = 0.45f),
                 )

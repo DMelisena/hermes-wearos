@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- DeviceDefault dark (plain black background — the portrait must NEVER become the app
+         wallpaper) + the launch story: the system's pre-draw splash shows her face in the icon
+         circle while the process starts, then the Compose overlay in HermesScaffold flashes her
+         full-bleed for ~900ms and hands off to the chat. -->
+    <style name="Theme.HermesWear" parent="@android:style/Theme.DeviceDefault">
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_hermes_orb</item>
+        <item name="android:windowSplashScreenBackground">#07070C</item>
+    </style>
+</resources>

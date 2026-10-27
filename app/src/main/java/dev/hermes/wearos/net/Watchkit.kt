@@ -176,17 +176,151 @@ object Watchkit {
     }
 
     /**
+     * PER-AGENT GATEWAY KEYS (SPEC §12.2): `GET /agent_keys` — watchkit reads
+     * `~/.hermes/profiles/<p>/.env` on the gateway box, which is the only place the truth lives: a
+     * multiplexed gateway resolves `API_SERVER_KEY` per profile and fails CLOSED for a named
+     * profile with no key, while the unauthenticated `/v1/health` keeps answering 200. Learning
+     * the keys here is what makes "switch agent" work the first time instead of 401-ing until the
+     * owner types 64 hex characters on a watch.
+     */
+    suspend fun agentKeys(): List<AgentKey> = withContext(Dispatchers.IO) {
+        val cfg = _config.value
+        val req = Request.Builder()
+            .url("${cfg.baseUrl}/agent_keys")
+            .get()
+            .header("Authorization", "Bearer ${cfg.token}")
+            .build()
+        clientCall(req) { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw ApiException(r.code, "agent_keys ${r.code}: ${text.take(120)}")
+            AgentKeysResponse.parse(text).agents.filter { it.profile.isNotBlank() }
+        }
+    }
+
+    /**
+     * FULL-TEXT SESSION SEARCH (SPEC §12.4): watchkit `GET /search` runs the store's own FTS5
+     * index (`messages_fts`, trigger-maintained) — the Sessions box searches EVERY chat the agent
+     * ever had, not the 20 rows /sessions lists. Snippets arrive with the matched words in
+     * [brackets]; they are shown verbatim so a wrist sees WHY a row matched.
+     */
+    suspend fun search(query: String, profile: String): SearchResponse = withContext(Dispatchers.IO) {
+        val cfg = _config.value
+        val url = cfg.baseUrl.toHttpUrl().newBuilder()
+            .addPathSegment("search")
+            .addQueryParameter("q", query)
+            .addQueryParameter("profile", profile)
+            .addQueryParameter("limit", "8")
+            .build()
+        val req = Request.Builder().url(url).get().header("Authorization", "Bearer ${cfg.token}").build()
+        clientCall(req) { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw ApiException(r.code, "search ${r.code}: ${text.take(120)}")
+            SearchResponse.parse(text)
+        }
+    }
+
+    /**
+     * THE COMMAND CATALOG (SPEC §12.3): `GET /catalog` on watchkit — the gateway's own slash-command
+     * list plus the capability flags the 6:00 overlay dims by. watchkit is the only place that can
+     * read `GET /v1/capabilities` and `GET /v1/skills` for EVERY profile with no profile key (it also
+     * merges the gateway's `command_catalog.json` if the operator wrote one); the watch has no
+     * reason to reach the gateway directly for a static list.
+     *
+     * Shape (documented in the watchkit header): `{commands:[{name,args,desc,honored,group,requires,
+     * source}], capabilities:{run_steer:true,…}}`. Failures throw — the caller keeps the built-in
+     * catalog, which is why the overlay works on a watch that has never reached this endpoint.
+     */
+    suspend fun catalog(profile: String): CatalogResponse = withContext(Dispatchers.IO) {
+        val cfg = _config.value
+        val url = cfg.baseUrl.toHttpUrl().newBuilder()
+            .addPathSegment("catalog")
+            .addQueryParameter("profile", profile)
+            .build()
+        val req = Request.Builder().url(url).get().header("Authorization", "Bearer ${cfg.token}").build()
+        clientCall(req) { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw ApiException(r.code, "catalog ${r.code}: ${text.take(120)}")
+            CatalogResponse.parse(text)
+        }
+    }
+
+    /**
+     * SESSION FORK for the Sessions long-press menu (owner: "hold a session → fork or delete").
+     * watchkit WRITES `state.db` directly, which is what makes this work for every agent — the
+     * gateway's own fork/delete needs the SOURCE profile's key, and `default` never has one the
+     * watch could hold (SPEC §12.2). Throws — the sheet shows the message verbatim.
+     */
+    suspend fun forkSession(fromProfile: String, sessionId: String, toProfile: String, newId: String): ForkResult =
+        withContext(Dispatchers.IO) {
+            val cfg = _config.value
+            val body = "{\"profile\":${esc(fromProfile)},\"session_id\":${esc(sessionId)}," +
+                "\"to_profile\":${esc(toProfile)},\"new_id\":${esc(newId)}}"
+            val req = Request.Builder()
+                .url(cfg.baseUrl.toHttpUrl().newBuilder().addPathSegment("session_fork").build())
+                .post(body.toRequestBody(JSON_MEDIA))
+                .header("Authorization", "Bearer ${cfg.token}")
+                .build()
+            clientCall(req) { r ->
+                val text = r.body?.string().orEmpty()
+                if (!r.isSuccessful) throw ApiException(r.code, "fork ${r.code}: ${text.take(140)}")
+                ForkResult.parse(text)
+            }
+        }
+
+    /**
+     * SESSION ARCHIVE / UNARCHIVE (owner batch 5: "archive instead of delete"): flips the flag the
+     * lists already filter on — desktop semantics, hide now show later. The archived list arrives
+     * through [fetchSessionsJson] with `archived = true`.
+     */
+    suspend fun archiveSession(profile: String, sessionId: String, archived: Boolean): Unit =
+        withContext(Dispatchers.IO) {
+            val cfg = _config.value
+            val body = "{\"profile\":${esc(profile)},\"session_id\":${esc(sessionId)}," +
+                "\"archived\":${if (archived) 1 else 0}}"
+            val req = Request.Builder()
+                .url(cfg.baseUrl.toHttpUrl().newBuilder().addPathSegment("session_archive").build())
+                .post(body.toRequestBody(JSON_MEDIA))
+                .header("Authorization", "Bearer ${cfg.token}")
+                .build()
+            clientCall(req) { r ->
+                val text = r.body?.string().orEmpty()
+                if (!r.isSuccessful) throw ApiException(r.code, "archive ${r.code}: ${text.take(140)}")
+            }
+        }
+
+    /** SESSION DELETE (double-confirmed on the wrist before this fires). Already-gone = success. */
+    suspend fun deleteSession(profile: String, sessionId: String): DeleteResult = withContext(Dispatchers.IO) {
+        val cfg = _config.value
+        val body = "{\"profile\":${esc(profile)},\"session_id\":${esc(sessionId)}}"
+        val req = Request.Builder()
+            .url(cfg.baseUrl.toHttpUrl().newBuilder().addPathSegment("session_delete").build())
+            .post(body.toRequestBody(JSON_MEDIA))
+            .header("Authorization", "Bearer ${cfg.token}")
+            .build()
+        clientCall(req) { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw ApiException(r.code, "delete ${r.code}: ${text.take(140)}")
+            DeleteResult.parse(text)
+        }
+    }
+
+    /**
      * Cross-profile sessions (owner walkthrough): GET /sessions?profile=<p>&limit=<n> — watchkit
      * reads the profile's state.db directly (see server/watchkit). Body is the gateway
      * `/api/sessions` shape + a per-row `profile`, so GatewaySessions.parse handles it verbatim.
      * Throws ApiException/IOException — the caller degrades to the single-profile list.
      */
-    suspend fun fetchSessionsJson(profile: String, limit: Int = GatewaySessions.MAX_ROWS): String = withContext(Dispatchers.IO) {
+    suspend fun fetchSessionsJson(
+        profile: String,
+        limit: Int = GatewaySessions.MAX_ROWS,
+        archived: Boolean = false,
+    ): String = withContext(Dispatchers.IO) {
         val cfg = _config.value
         val url = cfg.baseUrl.toHttpUrl().newBuilder()
             .addPathSegment("sessions")
             .addQueryParameter("profile", profile)
             .addQueryParameter("limit", limit.coerceIn(1, GatewaySessions.MAX_ROWS).toString())
+            .apply { if (archived) addQueryParameter("archived", "1") }
             .build().toString()
         val req = Request.Builder().url(url).get()
             .header("Authorization", "Bearer ${cfg.token}")
@@ -238,4 +372,96 @@ object Watchkit {
 
     private inline fun <T> clientCall(req: Request, crossinline block: (okhttp3.Response) -> T): T =
         HermesApi.DEFAULT.newCall(req).execute().use { block(it) }
+}
+
+/** One catalog row from watchkit `GET /catalog` (SPEC §12.3); `honored`/`group` are the
+ *  CommandKind/CommandGroup names, lowercase, with the same meaning as on the watch side. */
+@kotlinx.serialization.Serializable
+data class CommandInfo(
+    val name: String = "",
+    val args: String = "",
+    val desc: String = "",
+    val honored: String = "",
+    val group: String = "",
+    val requires: String? = null,
+    val source: String = "",
+)
+
+/**
+ * The catalog payload. `honored` reaches the UI verbatim (the overlay shows "inject" / "prompt" /
+ * "branch" per row) because WHAT the watch can do with a command is the whole point of the list —
+ * the Runs API does not dispatch slashes, so an honest client must never pretend otherwise.
+ */
+@kotlinx.serialization.Serializable
+data class CatalogResponse(
+    val commands: List<CommandInfo> = emptyList(),
+    val capabilities: Map<String, Boolean> = emptyMap(),
+) {
+    companion object {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
+        fun parse(text: String): CatalogResponse =
+            json.decodeFromJsonElement(CatalogResponse.serializer(), json.parseToJsonElement(text))
+    }
+}
+
+/** One row of watchkit `GET /agent_keys`. `key` is empty exactly when `has_key` is false. */
+@kotlinx.serialization.Serializable
+data class AgentKey(val profile: String = "", val has_key: Boolean = false, val key: String = "")
+
+@kotlinx.serialization.Serializable
+data class AgentKeysResponse(val agents: List<AgentKey> = emptyList()) {
+    companion object {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
+        fun parse(text: String): AgentKeysResponse =
+            json.decodeFromJsonElement(AgentKeysResponse.serializer(), json.parseToJsonElement(text))
+    }
+}
+
+/** One /search row (SPEC §12.4). `snippet` carries [bracketed] hits; `title_match` is server-side
+ *  because only the store knows whether the CHAT NAME matched. */
+@kotlinx.serialization.Serializable
+data class SearchHitDto(
+    val id: String = "",
+    val title: String = "",
+    // Gateway timestamps arrive as unix SECONDS with fractional digits (`1793034407.203…`); a
+    // Long field throws and the whole profile's search silently drops out — take it as Double.
+    val last_active: Double = 0.0,
+    val message_count: Int = 0,
+    val profile: String = "",
+    val hits: Int = 0,
+    val snippet: String = "",
+    val snippet_role: String = "",
+    val title_match: Boolean = false,
+) {
+    /** Server sends epoch SECONDS (same convention as /sessions); watch maths in ms. */
+    fun lastActiveMs(): Long = (last_active * 1000.0).toLong()
+}
+
+@kotlinx.serialization.Serializable
+data class SearchResponse(val query: String = "", val data: List<SearchHitDto> = emptyList()) {
+    companion object {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
+        fun parse(text: String): SearchResponse =
+            json.decodeFromJsonElement(SearchResponse.serializer(), json.parseToJsonElement(text))
+    }
+}
+
+/** `POST /session_fork` answer — [copied_messages] is what the toast reports. */
+@kotlinx.serialization.Serializable
+data class ForkResult(val id: String = "", val title: String = "", val copied_messages: Int = 0) {
+    companion object {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
+        fun parse(text: String): ForkResult =
+            json.decodeFromJsonElement(ForkResult.serializer(), json.parseToJsonElement(text))
+    }
+}
+
+/** `POST /session_delete` answer. */
+@kotlinx.serialization.Serializable
+data class DeleteResult(val id: String = "", val deleted: Boolean = false, val messages: Int = 0) {
+    companion object {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true }
+        fun parse(text: String): DeleteResult =
+            json.decodeFromJsonElement(DeleteResult.serializer(), json.parseToJsonElement(text))
+    }
 }

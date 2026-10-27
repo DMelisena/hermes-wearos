@@ -1,12 +1,14 @@
 package dev.hermes.wearos.domain
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import dev.hermes.wearos.WearApp
 import dev.hermes.wearos.data.AppSettings
 import dev.hermes.wearos.data.ChatMeta
 import dev.hermes.wearos.data.ChatStore
 import dev.hermes.wearos.net.GatewaySessions
+import dev.hermes.wearos.net.ApiException
 import dev.hermes.wearos.net.HermesApi
 import dev.hermes.wearos.net.Watchkit
 import dev.hermes.wearos.net.HermesApi.Companion.choiceNames
@@ -22,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Request
 import okhttp3.sse.EventSource
@@ -90,6 +93,10 @@ class ChatSession(
     /** Gateway session list for the sessions fast-path (owner ask #2). */
     private val _gatewaySessions = MutableStateFlow<List<GatewaySessions.Info>>(emptyList())
     val gatewaySessions: StateFlow<List<GatewaySessions.Info>> = _gatewaySessions
+
+    /** Archived rows for the current agent (🗃 chip; refreshed with every list refresh). */
+    private val _archivedSessions = MutableStateFlow<List<GatewaySessions.Info>>(emptyList())
+    val archivedSessions: StateFlow<List<GatewaySessions.Info>> = _archivedSessions
     private val _sessionsMeta = MutableStateFlow(SessionsMeta())
     val sessionsMeta: StateFlow<SessionsMeta> = _sessionsMeta
 
@@ -108,7 +115,93 @@ class ChatSession(
         _state.value = _state.value.copy(messages = messageLog.toList())
     }
 
-    private suspend fun api(): HermesApi = HermesApi(settings.baseUrl(), settings.token(), http)
+    /**
+     * The API handle for the ACTIVE agent, signed with THAT agent's key (SPEC §12.2). One Hermes
+     * box multiplexes every profile, but `API_SERVER_KEY` resolves per profile from the URL and
+     * fails CLOSED for a named profile that has none — so a single global token is exactly why
+     * "switching agents gives errors on some agents": the wear key is a valid 401 everywhere else.
+     * Resolution order lives in `GatewayModel.tokenFor` (agent key → gateway token → mirror).
+     */
+    private suspend fun api(): HermesApi = apiTo(settings.baseUrl())
+
+    /** Same signing for a FAILOVER endpoint (the base changes, the agent — and its key — do not). */
+    private suspend fun apiTo(baseUrl: String): HermesApi =
+        HermesApi(baseUrl, settings.tokenFor(settings.profileSync()), http)
+
+    // ── MODEL PICKER (SPEC §12.7) ────────────────────────────────────────────────────────────
+    // Owner: swap the never-used notes lane for a model selector. Semantics that fall out of the
+    // gateway (all verified live against 0.21.7): the run body's `model` routes the run AND the
+    // gateway stamps the session column with whatever it served, so (a) picking a model here just
+    // resends it on every ask for this chat, (b) adopted/continued sessions KEEP their last-served
+    // model by adopting the stamped column when the chat is opened, and (c) new sessions with no
+    // stamp and no pick ride the profile default. The session `POST /model` LOCK endpoint is NOT
+    // used: /v1/runs ignores it (only /api/sessions/{id}/chat honors it) — verified by running a
+    // locked session and watching `runtime.model` come back unchanged.
+
+    data class ModelState(
+        val loading: Boolean = false,
+        val error: String = "",
+        val catalog: ModelCatalog.Catalog? = null,
+        /** What THIS chat will run on ("" = gateway default). Mirrors ChatMeta.model. */
+        val picked: String = "",
+    )
+
+    private val _modelState = MutableStateFlow(ModelState())
+    val modelState: StateFlow<ModelState> = _modelState
+
+    /** Open the 🧠 lane: refresh picker state from cache/gateway (catalog is per-agent+endpoint). */
+    fun refreshModels(force: Boolean = false) {
+        _modelState.value = _modelState.value.copy(loading = true, error = "", picked = pickedModel())
+        scope.launch {
+            try {
+                val cat = withContext(Dispatchers.IO) { ModelCatalog.load(api(), force) }
+                _modelState.value = ModelState(catalog = cat, picked = pickedModel())
+            } catch (e: Exception) {
+                _modelState.value = _modelState.value.copy(loading = false, error = explain(e))
+            }
+        }
+    }
+
+    fun pickedModel(): String = activeId.takeIf { it.isNotEmpty() }?.let { store.get(it)?.model } ?: ""
+
+    /** Remember the pick for this chat ("" = back to gateway default). Selection is local-fast;
+     *  it takes effect on the NEXT ask — the running turn keeps its model, like the gateway itself. */
+    fun pickModel(model: String) {
+        if (activeId.isEmpty()) return
+        store.update(activeId) { it.copy(model = model, updatedAt = System.currentTimeMillis()) }
+        _modelState.value = _modelState.value.copy(picked = model)
+        Log.i("HermesWear", "model picked chat=$activeId model=${model.ifBlank { "gateway default" }}")
+    }
+
+    /**
+     * MODEL CONTINUITY on chat entry (owner: "if we're already using a model … keep using it"):
+     * a chat with no local pick inherits the gateway's stamped model — adopted sessions, desktop
+     * sessions, other devices. A dead/404 read just means "nothing stamped yet → default".
+     */
+    private fun adoptSessionModel(meta: ChatMeta) {
+        if (meta.model.isNotEmpty() || meta.sessionTitle.isBlank()) return
+        scope.launch {
+            try {
+                val stamped = withContext(Dispatchers.IO) { api().sessionModel(meta.sessionTitle) }
+                if (!stamped.isNullOrBlank() && store.get(meta.id)?.model.isNullOrEmpty()) {
+                    store.update(meta.id) { it.copy(model = stamped) }
+                    Log.i("HermesWear", "model adopted chat=${meta.id} model=$stamped")
+                }
+            } catch (e: Exception) { /* default answers; nothing to log loudly about */ }
+        }
+    }
+
+    /**
+     * Turn a raw failure into something a wrist can act on. The one that mattered (SPEC §12.2):
+     * a 401 on a multiplexed gateway usually means THIS agent has no `API_SERVER_KEY` on the box —
+     * `run submit 401: {"error":{…}}` told the owner nothing, so name the agent and say where to
+     * fix it. Everything else keeps its own message (no lying about real network failures).
+     */
+    private fun explain(e: Throwable): String {
+        val code = (e as? ApiException)?.code
+        if (code == 401) return "no key for ${settings.profileSync()} — Settings ▸ Gateways ▸ Agent keys"
+        return e.message ?: "network error"
+    }
 
     /**
      * Endpoint failover on request failure (SPEC §11): dethrone the endpoint [usedBaseUrl]
@@ -153,6 +246,10 @@ class ChatSession(
                 enterChat(scoped, store.loadTranscript(scoped.id))
             }
             resumeRun()
+            // AUTO CATCH-UP ON RESTORE (owner: *"it should pretty much do it on its own"*): the
+            // chat the app reopens on launch re-pulls its gateway tail too. Guards inside skip
+            // it silently when streaming, unbound, cooled-down, or offline.
+            catchUpActive()
         }
     }
 
@@ -169,12 +266,33 @@ class ChatSession(
         gen++
         // Opening a chat acknowledges it: cancel its notifications + attention flag (M5).
         Notifs.cancelChat(app, meta.id, meta.lastRunId)
+        adoptSessionModel(meta) // SPEC §12.7: un-picked chats keep the model their last turn used
+        _modelState.value = ModelState(picked = meta.model) // picker always opens on THIS chat's pick
         RunWakeLock.release("chat switch → ${meta.id}") // re-acquired by resumeRun if a run lives here
         store.update(meta.id) { it.copy(pendingAttention = false) }
         _state.value = ChatUiState(
             messages = messageLog.toList(), gen = gen,
             activeChatId = meta.id, activeChatLabel = meta.label,
         )
+    }
+
+    /**
+     * "OPEN SESSION" from a notification (owner: *"go straight to that session, not just open
+     * the app — it may need to switch agents from wherever the app currently is"*). Same-agent
+     * ids take the plain path; cross-agent ids switch first, then land on THAT chat.
+     */
+    fun openFromNotification(id: String) {
+        scope.launch {
+            store.loadIfNeeded()
+            val meta = store.get(id)
+            val (route, agent) = NotificationDeepLink.plan(settings.profileSync(), meta?.profile ?: "", meta != null)
+            if (route == NotificationDeepLink.Route.SWITCH_THEN_OPEN) {
+                Log.i("HermesWear", "deep link: chat $id lives on '$agent' — switching first")
+                switchAgent(agent) { _, _, _ -> openChat(id) }
+            } else {
+                openChat(id)
+            }
+        }
     }
 
     /** Continue chat [id] (chats-list tap / dev `open_chat`): persist current, load theirs. */
@@ -187,6 +305,10 @@ class ChatSession(
             store.setActive(id)
             enterChat(meta, store.loadTranscript(id))
             resumeRun()
+            // AUTO CATCH-UP (owner: *"it should pretty much do it on its own"*): entering a
+            // session-bound chat re-pulls whatever the desktop added since the last look.
+            // No-op for local-only chats and empty transcripts; silently skips mid-stream.
+            catchUpActive()
         }
     }
 
@@ -287,18 +409,22 @@ class ChatSession(
                 // at worst one 2.5 s probe when the 5-min revalidation / primary-backoff is due.
                 runCatching { if (WearApp.Graph.hasEndpoints()) WearApp.Graph.endpoints.ensure(false) }
                 val a = api()
-                val session = store.get(activeId)!!.sessionTitle
+                val metaNow = store.get(activeId)!!
+                val session = metaNow.sessionTitle
+                // Per-chat model (SPEC §12.7): "" = never picked → the virtual alias rides the
+                // gateway default. A picked id routes every turn of this chat on the gateway.
+                val modelSel = metaNow.model.ifBlank { HermesApi.VIRTUAL_MODEL }
                 val idem = UUID.randomUUID().toString()
                 val accepted = try {
-                    a.submitRun(trimmed, session, idem)
+                    a.submitRun(trimmed, session, idem, modelSel)
                 } catch (e: Exception) {
                     // Endpoint failover (SPEC §11): the winner just died mid-session? Advance to
                     // the gateway's next endpoint BEFORE retrying; the Idempotency-Key makes the
                     // retry a replay, never a double-run, whichever endpoint lands the request.
                     Log.w(TAG, "submit failed (${e.message}) — endpoint failover check")
                     val nextBase = advanceEndpoint(a.baseUrl)
-                    val retryApi = nextBase?.let { HermesApi(it, settings.token(), http) } ?: run { delay(1_500); a }
-                    retryApi.submitRun(trimmed, session, idem)
+                    val retryApi = nextBase?.let { apiTo(it) } ?: run { delay(1_500); a }
+                    retryApi.submitRun(trimmed, session, idem, modelSel)
                 }
                 store.update(activeId) { it.copy(lastRunId = accepted.runId, updatedAt = System.currentTimeMillis()) }
                 settings.setLastRun(accepted.runId) // legacy key: pre-registry resume path (migration source)
@@ -307,8 +433,9 @@ class ChatSession(
                 _state.value = _state.value.copy(status = "thinking…")
                 openEventStream(a, accepted.runId)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e // chat/agent switch mid-send is not an error
                 Log.e(TAG, "ask failed", e)
-                finishWith("⚠️ ${e.message ?: "network error"}", error = true)
+                finishWith("⚠️ ${explain(e)}", error = true)
             }
         }
     }
@@ -326,16 +453,30 @@ class ChatSession(
             override fun onEvent(es: EventSource, id: String?, type: String?, data: String) = handleEvent(runId, data)
             override fun onFailure(es: EventSource, t: Throwable?, response: okhttp3.Response?) {
                 // Stream dropped mid-run: fall back to status polling (never lose the answer).
-                scope.launch { pollUntilTerminal(a, runId) }
+                scope.launch { watchRun(a, runId) }
             }
             override fun onClosed(es: EventSource) {
                 // Not only terminal events close streams: a run parked in approval (or a proxy
                 // timeout) ends the SSE too. If we haven't settled, keep watching via polling —
                 // finishWith's exactly-once guard makes this safe alongside a real terminal event.
-                if (lastFinishedRun != runId) scope.launch { pollUntilTerminal(a, runId) }
+                if (lastFinishedRun != runId) scope.launch { watchRun(a, runId) }
             }
         }
         eventSource = EventSources.createFactory(http).newEventSource(request, listener)
+        // APPROVAL WATCHDOG (found live 2026-10-26): a run parked on manual approval keeps the
+        // SSE open and SILENT — no approval.request event ever arrives — so the card would never
+        // show. One status poller per run surfaces parked approvals within 3 s and doubles as
+        // the never-lose-the-answer net; watchRun dedups vs the closed-stream fallbacks.
+        scope.launch { watchRun(a, runId) }
+    }
+
+    private var watchPollRun = ""
+
+    /** One [pollUntilTerminal] per run, whoever asks for it first. */
+    private suspend fun watchRun(a: HermesApi, runId: String) {
+        if (watchPollRun == runId) return
+        watchPollRun = runId
+        pollUntilTerminal(a, runId)
     }
 
     private fun handleEvent(runId: String, data: String) {
@@ -365,12 +506,14 @@ class ChatSession(
     private suspend fun pollUntilTerminal(a: HermesApi, runId: String) {
         Log.i(TAG, "poll fallback attached run=$runId")
         var netLogged = false
+        var n = 0
         while (runId == currentRunId) {
             val snap = try { a.runStatus(runId) } catch (e: Exception) {
                 if (!netLogged) { Log.w(TAG, "status poll degraded run=$runId: ${e.message}"); netLogged = true }
                 delay(3_000); continue
             }
             netLogged = false
+            if (++n % 5 == 0) Log.d(TAG, "watch poll #$n run=$runId status=${snap.status} appr=${snap.approval != null}")
             when (snap.status) {
                 "completed" -> return finishWith(snap.output ?: _state.value.live)
                 "failed" -> return finishWith("⚠️ run failed", error = true)
@@ -392,6 +535,7 @@ class ChatSession(
      * (dedup by request_id — pollUntilTerminal re-reports the same approval every 3 s).
      */
     private fun onApprovalArrived(info: ApprovalInfo) {
+        Log.i(TAG, "approval arrived run=${info.runId} req=${info.requestId} active=$activeId choices=${info.choices}")
         _state.value = _state.value.copy(approval = info)
         if (WearApp.Graph.isForeground) return
         val key = info.requestId ?: info.runId
@@ -460,6 +604,122 @@ class ChatSession(
      * (`run_stop` capability) — called, but never required: client-side stop is the deliverable
      * even when the gateway rejects or is unreachable.
      */
+    /**
+     * DEV RENDER HARNESS (SPEC §13.3): inject a canned answer into the live transcript WITHOUT the
+     * gateway (`-e render tables` → the 5-column grid, `-e render mermaid` → the fence, …). It lands
+     * exactly like a streamed Hermes answer — same markdown path, same scroll anchoring — so a
+     * screenshot proves the renderer rather than the model's taste.
+     */
+    fun injectAnswer(text: String) {
+        addMessage(ChatMessage.Role.Hermes, text)
+        if (activeId.isNotEmpty()) store.saveTranscript(activeId, messageLog)
+        Log.i(TAG, "dev: injected ${text.length} chars of canned answer (chat=$activeId)")
+    }
+
+    /**
+     * FORK ON EDIT (SPEC §12.5, owner: editing an old prompt should REDO it "like the desktop",
+     * not pile a second answer onto the pile). As far as this gateway allows, it does exactly
+     * that: the local transcript rolls back to just before the edited turn, the gateway session
+     * is FORKED and this chat re-points at the fork, then the edited text is asked fresh on the
+     * branch. What cannot be undone (measured, not guessed): the fork copies the FULL history —
+     * the child is `#2` with every message — because there is no truncate route (SPEC §13.5
+     * asks for one), so the superseded answer stays in the MODEL's context even though the wrist
+     * never sees it again. The system line says so; silence would be a lie. No run in flight /
+     * fork refused (offline, key-less agent) → degrade honestly to the old append behavior with
+     * a visible note, because "my edit vanished" is worse than "my edit appended".
+     */
+    fun editAndResend(messageId: Long, newText: String) {
+        val t = newText.trim()
+        if (t.isEmpty()) return
+        val idx = messageLog.indexOfFirst { it.id == messageId }
+        if (idx < 0 || messageLog[idx].role != ChatMessage.Role.User) { ask(t); return }
+        // A run answering the OLD version of this turn must stop before the rollback erases it.
+        eventSource?.cancel()
+        askJob?.cancel()
+        val kept = messageLog.subList(0, idx).toMutableList()
+        scope.launch {
+            val chat = store.get(activeId)
+            val old = chat?.sessionTitle.orEmpty()
+            val forked = if (old.isNotEmpty()) {
+                runCatching { api().forkSession(old) }
+                    .onFailure { Log.w(TAG, "edit-fork failed (${it.message}) → append fallback") }
+                    .getOrDefault("")
+            } else ""
+            if (forked.isNotEmpty() && activeId.isNotEmpty()) {
+                store.update(activeId) { it.copy(sessionTitle = forked, updatedAt = System.currentTimeMillis()) }
+            }
+            messageLog = kept
+            _state.value = _state.value.copy(
+                messages = kept.toList(), live = "", status = "", busy = false,
+                activeChatId = activeId,
+            )
+            if (activeId.isNotEmpty()) store.saveTranscript(activeId, kept)
+            addMessage(
+                ChatMessage.Role.System,
+                if (forked.isNotEmpty()) "— edited · branched (the superseded answer stays in context — no truncate yet) —"
+                else "— edited · fork unavailable, appended instead —",
+            )
+            Log.i(TAG, "edit-and-resend: kept=$idx fork=${forked.ifEmpty { "none" }}")
+            ask(t)
+        }
+    }
+
+    /**
+     * `/fork` (SPEC §12.3, honored=branch): branch the current chat's gateway session and keep
+     * typing HERE — the watch chat re-points at the child, the local transcript stays put (it IS
+     * the history you can see), and the parent remains untouched on the gateway.
+     */
+    fun forkActive() {
+        scope.launch {
+            val chat = store.get(activeId)
+            val old = chat?.sessionTitle.orEmpty()
+            if (old.isEmpty()) {
+                addMessage(ChatMessage.Role.System, "— /fork: this chat has no gateway session yet —")
+                return@launch
+            }
+            val forked = runCatching { api().forkSession(old) }.getOrDefault("")
+            if (forked.isEmpty()) {
+                addMessage(ChatMessage.Role.System, "— /fork failed (offline or no key) —")
+                return@launch
+            }
+            store.update(activeId) { it.copy(sessionTitle = forked, updatedAt = System.currentTimeMillis()) }
+            addMessage(ChatMessage.Role.System, "— branched → ${forked.take(18)} · parent untouched, history carried —")
+            Log.i(TAG, "forked chat=$activeId $old -> $forked")
+        }
+    }
+
+    /**
+     * `/btw <aside>` (SPEC §12.3, the owner's favourite): the side conversation gets its OWN
+     * watch chat on a forked session — this thread stays exactly as clean as it was, and dial
+     * 7:30 (chats) jumps between them. The fork carries full context, so the aside can reference
+     * the real chat; the parent session never sees the aside at all.
+     */
+    fun sideAsk(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        scope.launch {
+            store.loadIfNeeded()
+            val chat = store.get(activeId)
+            val old = chat?.sessionTitle.orEmpty()
+            val forked = if (old.isNotEmpty()) runCatching { api().forkSession(old) }.getOrDefault("") else ""
+            val draft = if (forked.isNotEmpty()) {
+                store.draftMetaWith(forked, "btw: ${t.take(24)}", settings.profileSync())
+            } else {
+                store.draftMeta("btw: ${t.take(24)}", settings.profileSync())
+            }
+            if (activeId.isNotEmpty()) store.saveTranscript(activeId, messageLog)
+            store.addActive(draft)
+            enterChat(draft, emptyList())
+            addMessage(
+                ChatMessage.Role.System,
+                if (forked.isNotEmpty()) "— side branch · this chat can see the parent's context; dial 7:30 to switch back —"
+                else "— /btw without a fork (offline or no session yet) —",
+            )
+            ask(t)
+            Log.i(TAG, "btw side branch chat=${draft.id} fork=${forked.ifEmpty { "none" }}")
+        }
+    }
+
     fun stopActiveRun() {
         if (!_state.value.busy) { Log.i(TAG, "stop ignored: no run in flight"); return }
         val runId = currentRunId
@@ -485,6 +745,38 @@ class ChatSession(
             store.update(chatId) { it.copy(lastRunId = "", updatedAt = System.currentTimeMillis()) }
             scope.launch { settings.setLastRun("") }
             store.saveTranscript(chatId, messageLog)
+        }
+    }
+
+    /**
+     * `/steer` (SPEC §12.3, gateway cap `run_steer`): inject guidance into the run IN FLIGHT
+     * (`POST /v1/runs/{id}/steer`) instead of queueing another turn — the dial/overlay lane the
+     * owner lives by ("I like to use the slash BTW and the slash steer a lot"). The transcript
+     * shows it as a user line with a `⟳ steer` marker so the thread still reads honestly.
+     *
+     * Fallback is deliberate: nothing in flight, or the gateway lacks the cap, or the run ended
+     * between tap and request → ask it as a normal turn. A steer that vanished silently is worse
+     * than one that lands one beat late.
+     */
+    fun steer(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        val runId = currentRunId
+        if (runId.isEmpty() || runId == lastFinishedRun || !_state.value.busy) {
+            Log.i(TAG, "steer: nothing in flight → plain ask")
+            ask(t)
+            return
+        }
+        scope.launch {
+            try {
+                api().steerRun(runId, t)
+                addMessage(ChatMessage.Role.User, "\u27f3 steer: $t")
+                if (activeId.isNotEmpty()) store.saveTranscript(activeId, messageLog)
+                Log.i(TAG, "steer injected into run=$runId")
+            } catch (e: Exception) {
+                Log.w(TAG, "steer failed (${e.message}) → asked instead")
+                ask(t)
+            }
         }
     }
 
@@ -517,6 +809,16 @@ class ChatSession(
                 createChat(null) // new agent gets its own chat with the <profile>-watch- prefix
             }
             Log.i(TAG, "agent switched -> $agent base=$newBase chat=$activeId prefix=${ProfileLogic.sessionPrefix(agent)}")
+            // THE SECOND HALF OF THE BUG (SPEC §12.2): the old per-profile 401 also STARVED the
+            // sessions refresh — the gateway fetch failed, the stale cache was served, and a
+            // brand-new agent showed the PREVIOUS agent's list. Learn this box's keys (watchkit
+            // reads profiles/<p>/.env) and refresh the list for the agent now selected, so the
+            // Sessions screen shows its own recents the moment the switch lands.
+            scope.launch {
+                val learned = runCatching { settings.refreshAgentKeys() }.getOrDefault(0)
+                Log.i(TAG, "agent keys refreshed for $agent ($learned known)")
+                refreshGatewaySessions()
+            }
             onDone(true, newBase, "")
         }
     }
@@ -552,6 +854,10 @@ class ChatSession(
                     localTranscriptSize = if (existing.id == activeId) messageLog.size else localSize,
                     profileHint = sourceProfile,
                 )
+                // ...and CATCH UP the non-empty ones (owner's half-cut answer): tapping a session
+                // in the list always shows the gateway's latest tail, no manual pull needed.
+                // The empty case self-skips here (empty transcript guard) — no double-seed.
+                catchUpActive()
                 return@launch
             }
             if (activeId.isNotEmpty()) store.saveTranscript(activeId, messageLog)
@@ -561,6 +867,174 @@ class ChatSession(
             Log.i(TAG, "gateway session adopted chat=${meta.id} session=$sessionId")
             backfillHistory(meta, localTranscriptSize = 0, profileHint = sourceProfile)
         }
+    }
+
+    /**
+     * CHAT CATCH-UP (owner: *"somehow it should just sync… I shouldn't have to do the manual
+     * reload"* — and the pull-up gesture remains as the manual door). Re-pulls the ACTIVE chat's
+     * gateway session and appends the missing tail via [SessionHistory.catchUpPlan]. Rules: never
+     * while a run streams here (can't fight the token spigot); one flight at a time; per-chat
+     * cooldown so re-taps don't hammer the box; unanchored diffs refuse rather than duplicate;
+     * failures are silent in the log — the local transcript is never touched. Auto-called on
+     * every entry into a session-bound chat; [manual] adds the toast.
+     */
+    private var catchUpJob: Job? = null
+    private val catchUpAt = mutableMapOf<String, Long>()
+
+    fun catchUpActive(manual: Boolean = false, onDone: ((Boolean, Int) -> Unit)? = null) {
+        val chatId = activeId
+        if (chatId.isEmpty() || catchUpJob?.isActive == true) return
+        if (_state.value.busy) return // our own stream owns the transcript right now
+        val last = catchUpAt[chatId] ?: 0L
+        if (!manual && SystemClock.elapsedRealtime() - last < 5_000) return
+        catchUpAt[chatId] = SystemClock.elapsedRealtime()
+        catchUpJob = scope.launch {
+            store.loadIfNeeded()
+            val meta = store.get(chatId) ?: return@launch
+            val sessionId = meta.sessionTitle
+            if (sessionId.isBlank() || messageLog.isEmpty()) {
+                if (manual) onDone?.invoke(false, 0)
+                return@launch
+            }
+            val localSnapshot = messageLog.toList()
+            var appended = -1
+            var sawEmpty = false
+            for (p in SessionHistory.profileProbes(meta.profile)) {
+                val probe = scope.async(Dispatchers.IO) {
+                    SessionHistory.parse(Watchkit.fetchSessionMessagesJson(p, sessionId))
+                }
+                val msgs = try {
+                    withTimeoutOrNull(historyFetchTimeoutMs) { probe.await() }
+                } catch (e: Exception) { null }
+                probe.cancel()
+                if (msgs == null) continue // this probe failed (network/503) — try the next profile
+                if (msgs.isEmpty()) { sawEmpty = true; continue } // store answered, session not there
+                val plan = SessionHistory.catchUpPlan(msgs, localSnapshot)
+                if (plan == null) { appended = 0; break }
+                val stamped = plan.map { ChatMessage(nextId(), it.role, it.text) }
+                messageLog = ArrayList(messageLog + stamped) // live sends during the fetch stay ahead of it
+                _state.value = _state.value.copy(messages = messageLog.toList())
+                store.saveTranscript(chatId, messageLog)
+                Log.i(TAG, "chat catch-up +${stamped.size} chat=$chatId session=$sessionId profile=$p")
+                appended = stamped.size
+                break
+            }
+            if (appended < 0 && sawEmpty) appended = 0 // stores answered; session simply wasn't there — not an outage
+            if (appended < 0) Log.i(TAG, "chat catch-up unavailable chat=$chatId")
+            else if (appended == 0) Log.i(TAG, "chat catch-up up to date chat=$chatId session=$sessionId")
+            if (manual) onDone?.invoke(appended >= 0, appended.coerceAtLeast(0))
+        }
+    }
+
+    /**
+     * LONG-PRESS → FORK (owner: "hold a session and get fork or delete, delete double-checked"):
+     * copies [info]'s session INTO THE CURRENT AGENT's store under a watch-shaped id
+     * (`<profile>-watch-x`, so the row keeps its ⌚ marker) and opens a chat on it — "continue this
+     * desktop chat on my wrist" becomes one hold. The copy is watchkit's, not the gateway fork:
+     * a gateway fork needs the SOURCE profile's key and most profiles have none (SPEC §12.2),
+     * `default` never will. Lineage rides the store (`parent_session_id`) and the title gets the
+     * " (fork)" suffix there; [SessionHistory] backfill shows the copied messages on open.
+     */
+    fun forkBrowserSession(info: GatewaySessions.Info, onDone: (Boolean, String) -> Unit) {
+        scope.launch {
+            val agent = settings.profileSync()
+            val newId = ProfileLogic.newSessionId(agent)
+            val res = runCatching { Watchkit.forkSession(info.profile.ifBlank { agent }, info.id, agent, newId) }
+            val r = res.getOrNull()
+            if (r == null || r.id.isBlank()) {
+                val why = (res.exceptionOrNull()?.message ?: "fork failed")
+                Log.w(TAG, "session fork ${info.id} failed: $why")
+                onDone(false, why.take(140))
+                return@launch
+            }
+            Log.i(TAG, "session forked ${info.id} -> $newId (${r.copied_messages} msgs)")
+            resumeGatewaySession(newId, SessionManage.chatLabel(info.title), agent)
+            // The child must show up in the list the user comes BACK to — they jumped to the chat,
+            // but Sessions behind it was stale and the fresh fork looked like it never happened.
+            refreshGatewaySessions()
+            onDone(true, "forked ${r.copied_messages} msgs")
+        }
+    }
+
+    /**
+     * LONG-PRESS → DELETE (the sheet double-confirms before this is ever called): a REAL delete in
+     * `state.db` via watchkit — messages then session, FTS triggers keep the search index honest —
+     * plus the local mirror chat if one exists (a ⌚ row deleted from the list must vanish from
+     * Chats too, and vice versa). "Already gone" counts as success: the button means *get it off
+     * my list*, whoever removed it meanwhile.
+     */
+    fun deleteBrowserSession(info: GatewaySessions.Info, onDone: (Boolean, String) -> Unit) {
+        scope.launch {
+            val res = runCatching { Watchkit.deleteSession(info.profile.ifBlank { settings.profileSync() }, info.id) }
+            if (res.isFailure) {
+                val why = (res.exceptionOrNull()?.message ?: "delete failed")
+                Log.w(TAG, "session delete ${info.id} failed: $why")
+                onDone(false, why.take(140))
+                return@launch
+            }
+            Log.i(TAG, "gateway session deleted ${info.id} (${res.getOrNull()?.messages ?: 0} msgs)")
+            store.loadIfNeeded()
+            SessionManage.localMirror(store.chats.value, info.id)?.let { mirror ->
+                if (mirror.id == store.activeId.value) {
+                    // The open chat IS the doomed mirror — `delete` refuses the active one, so move
+                    // to the freshest sibling first; with no sibling, a fresh draft takes the seat.
+                    val next = store.chats.value
+                        .filter { it.id != mirror.id && it.profile == mirror.profile }
+                        .maxByOrNull { it.updatedAt }
+                    if (next != null) {
+                        store.setActive(next.id)
+                        enterChat(next, store.loadTranscript(next.id))
+                    } else createChat(null)
+                }
+                store.delete(mirror.id)
+                Log.i(TAG, "watch mirror chat removed ${mirror.id}")
+            }
+            refreshGatewaySessions()
+            onDone(true, "deleted")
+        }
+    }
+
+    /**
+     * LONG-PRESS → 🗃 ARCHIVE / UNARCHIVE (owner batch 5: *"archive instead of delete"*): flips
+     * the flag every list already filters on — desktop semantics, hide now / show later, and the
+     * undo lives on the wrist too (the 🗃 chip). Hard delete keeps its double check; the watch's
+     * own CHAT of the session is deliberately left alone — archiving history should not
+     * vaporize the conversation you are looking at.
+     */
+    fun archiveBrowserSession(info: GatewaySessions.Info, archived: Boolean, onDone: (Boolean, String) -> Unit) {
+        scope.launch {
+            val res = runCatching {
+                Watchkit.archiveSession(info.profile.ifBlank { settings.profileSync() }, info.id, archived)
+            }
+            if (res.isFailure) {
+                val why = (res.exceptionOrNull()?.message ?: "archive failed")
+                Log.w(TAG, "session archive ${info.id} failed: $why")
+                onDone(false, why.take(140))
+                return@launch
+            }
+            Log.i(TAG, "session ${if (archived) "archived" else "unarchived"} ${info.id}")
+            refreshGatewaySessions() // both lists: the row must leave one and appear in the other
+            onDone(true, if (archived) "archived" else "unarchived")
+        }
+    }
+
+    /** Dev-hook entry (`-e session_archive/-e session_unarchive <id>`): resolve profile from either cached list. */
+    fun manageArchiveById(sessionId: String, archived: Boolean, onDone: (Boolean, String) -> Unit) {
+        val id = sessionId.trim()
+        if (id.isEmpty()) return
+        val row = _gatewaySessions.value.firstOrNull { it.id == id }
+            ?: _archivedSessions.value.firstOrNull { it.id == id }
+            ?: GatewaySessions.Info(id, "", 0L, 0, settings.profileSync(), archived = !archived)
+        archiveBrowserSession(row, archived, onDone)
+    }
+
+    /** Dev-hook entry (`-e session_fork/-e session_delete <id>`): resolve the row's profile from the cached list. */
+    fun manageSessionById(sessionId: String, fork: Boolean, onDone: (Boolean, String) -> Unit) {
+        val id = sessionId.trim()
+        if (id.isEmpty()) return
+        val row = _gatewaySessions.value.firstOrNull { it.id == id }
+            ?: GatewaySessions.Info(id, "", 0L, 0, settings.profileSync())
+        if (fork) forkBrowserSession(row, onDone) else deleteBrowserSession(row, onDone)
     }
 
     /** Max wait per watchkit probe; the daemon answers in tens of ms — this is a leash, not a budget. */
@@ -618,12 +1092,91 @@ class ChatSession(
      * Merged newest-first, capped to 30 (owner: "don't cache too many, gets out of hand"), NO
      * transcripts cached — tapping a foreign-profile row adopts it (agent swap + session resume).
      */
+    /**
+     * SESSION SEARCH (SPEC §12.4, owner: "a tap-to-search box, searchable via on-watch Vosk voice
+     * or keyboard"). One query answers in two passes: the watch's OWN chats land instantly (labels
+     * + saved transcripts, works with the gateway offline), then gateway full-text hits (watchkit
+     * FTS, this agent + the desktop profile) merge in under the rules in `SessionSearch.merge`.
+     * Every keystroke may call this — the previous search is simply cancelled.
+     */
+    private val _searchHits = MutableStateFlow<List<SessionHit>>(emptyList())
+    val searchHits: StateFlow<List<SessionHit>> = _searchHits
+    private var searchJob: Job? = null
+
+    fun searchSessions(query: String) {
+        val q = query.trim()
+        if (q.isEmpty()) {
+            searchJob?.cancel()
+            _searchHits.value = emptyList()
+            return
+        }
+        searchJob?.cancel()
+        searchJob = scope.launch {
+            val local = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                SessionSearch.localHits(chats.value, q) { store.loadTranscript(it) }
+            }
+            _searchHits.value = local // keystroke feedback while the box is still reachable
+            val agent = settings.profileSync()
+            val gateway = mutableListOf<SessionHit>()
+            for (p in listOf(agent, ProfileLogic.PROFILE_COMPUTER).distinct()) {
+                try {
+                    gateway += Watchkit.search(q, p).data.map { dto ->
+                        SessionHit(
+                            id = dto.id,
+                            title = dto.title.ifBlank { dto.id },
+                            profile = dto.profile.ifBlank { p },
+                            snippet = dto.snippet,
+                            source = SessionHit.Source.GATEWAY,
+                            lastActiveMs = dto.lastActiveMs(),
+                            hits = dto.hits,
+                            titleMatch = dto.title_match,
+                        )
+                    }
+                } catch (e: Exception) {
+                    // One profile's store being unreachable must not swallow the other's answer —
+                    // and the local hits already on screen stay exactly where they are.
+                    Log.i(TAG, "search '$q' profile=$p skipped (${e.message})")
+                }
+            }
+            _searchHits.value = SessionSearch.merge(local, gateway)
+            Log.i(TAG, "search '$q' -> ${_searchHits.value.size} hits (${local.size} local)")
+        }
+    }
+
     fun refreshGatewaySessions() {
         scope.launch {
             val current = settings.profileSync()
+            // The 🗃 chip's content + visibility (owner: archive instead of delete). Fail-soft: no
+            // archived list simply means no chip — the normal list is untouched by its failure.
+            _archivedSessions.value = try {
+                GatewaySessions.parseProfiled(Watchkit.fetchSessionsJson(current, archived = true), current)
+            } catch (e: Exception) { emptyList() }
             val (mine, error) = try {
                 GatewaySessions.parseProfiled(api().sessionsJson(), current) to ""
             } catch (e: Exception) {
+                // Key-less agent? watchkit reads that profile's state.db with no profile key at all
+                // (SPEC §12.2) — the difference between "show me this agent's recents" and a list
+                // that silently belongs to whoever had a working token.
+                val viaWatchkit = try {
+                    GatewaySessions.parseProfiled(Watchkit.fetchSessionsJson(current), current)
+                } catch (e3: Exception) {
+                    emptyList()
+                }
+                if (viaWatchkit.isNotEmpty()) {
+                    Log.i(TAG, "sessions for $current via watchkit (${viaWatchkit.size}) — gateway said: ${e.message}")
+                    return@launch run {
+                        val computer = try {
+                            GatewaySessions.parseProfiled(
+                                Watchkit.fetchSessionsJson(ProfileLogic.PROFILE_COMPUTER), ProfileLogic.PROFILE_COMPUTER,
+                            )
+                        } catch (e4: Exception) { emptyList() }
+                        val merged = GatewaySessions.merge(viaWatchkit + computer)
+                        _gatewaySessions.value = merged
+                        val ts = System.currentTimeMillis()
+                        _sessionsMeta.value = SessionsMeta(stale = false, fetchedAtMs = ts, error = "")
+                        settings.setSessionsCache(GatewaySessions.encode(merged), ts)
+                    }
+                }
                 // Offline/gateway down: serve the merged cache (already profile-tagged rows).
                 val (text, _) = settings.sessionsCache()
                 val cached = if (text.isNotEmpty()) try { GatewaySessions.parse(text) }

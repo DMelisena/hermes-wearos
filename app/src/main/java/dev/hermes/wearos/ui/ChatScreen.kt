@@ -3,6 +3,8 @@ package dev.hermes.wearos.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,7 +47,6 @@ fun ChatScreen(
     state: ChatUiState,
     onApprove: (String) -> Unit,
     voiceEnabled: Boolean,
-    onToggleVoice: () -> Unit,
     voiceStatus: String = "",
     chatLabel: String = "",
     onOpenChats: () -> Unit = {},
@@ -57,6 +60,9 @@ fun ChatScreen(
     // leaves composition while listening) — walkthrough: "after stt talk button done, it scrolls
     // to the top of convo instead of staying at bottom".
     listState: ScalingLazyListState = rememberScalingLazyListState(),
+    // PULL-UP-AT-THE-END (owner: *"scroll to the bottom and keep dragging up → refresh that
+    // session from the gateway"*). The auto-sync does the everyday work; this is the manual door.
+    onPullUpAtBottom: () -> Unit = {},
 ) {
     // PINCH FONT-SCALE: every type change re-runs the bottom anchor (text height changes shift
     // the tail) — same scroll machinery, toast-free.
@@ -75,7 +81,25 @@ fun ChatScreen(
             hasStatus = state.status.isNotEmpty(),
             showEmptyHint = ChatAnchor.showEmptyHint(state.messages.size, state.live, state.approval != null),
         )
-        if (idx > 0) {
+        // HOLD (owner batch 7): while a run streams and the whole exchange still fits (nothing
+        // left to scroll to), the viewport HOLDS at the question — the incoming first lines are
+        // visible instead of force-pinned under the orb. Only once the answer overflows the
+        // circle does the classic tail-follow kick in.
+        val qRow = ChatAnchor.questionRow(
+            state.messages.indexOfLast { it.role == dev.hermes.wearos.domain.ChatMessage.Role.User },
+        )
+        val starting = state.busy && state.live.isEmpty() && state.approval == null
+        val holding = state.busy && state.live.isNotEmpty() && !listState.canScrollForward
+        if (state.approval != null) {
+            // APPROVAL CENTERS (owner demo 2026-10-26): the card is the actionable row and the
+            // list may already sit at its end (lazy tail) — the tail push can't lift a card that
+            // was inserted ABOVE the viewport. scrollToItem(idx, 0) lands idx on the list's
+            // center anchor = dead-center in the circle, every time (measured on-device).
+            listState.scrollToItem(state.messages.size.coerceIn(0, listState.layoutInfo.totalItemsCount - 1), 0)
+        } else if (starting && qRow != null) {
+            // Pin the question at the list's Middle anchor — the answer grows downward from it.
+            listState.scrollToItem(qRow.coerceAtMost(listState.layoutInfo.totalItemsCount - 1), 0)
+        } else if (!holding && idx > 0) {
             // THE anchor (owner walkthrough): latest row must be on screen at the list's end.
             // wear-compose 1.4.1 ScalingLazyColumn facts measured on-device: scrollToItem(last, 0)
             // lands short (lazy composition hasn't laid the tail out yet), and the true list end
@@ -95,7 +119,30 @@ fun ChatScreen(
     }
     ScalingLazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().pointerInput(listState) {
+            // OBSERVER-ONLY gesture watch (Initial pass, consumes nothing → the list scrolls and
+            // the orb keeps its own lane). While the end is reached (no forward scroll left),
+            // upward travel accumulates; past the threshold the gateway re-pull fires — once
+            // per stroke.
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                var acc = 0f
+                var fired = false
+                while (true) {
+                    val ev = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = ev.changes.firstOrNull() ?: break
+                    if (!change.pressed) break
+                    val up = change.previousPosition.y - change.position.y
+                    if (up > 0f) {
+                        if (listState.canScrollForward) acc = 0f
+                        else if (!fired) {
+                            acc += up
+                            if (acc > 150f) { fired = true; onPullUpAtBottom() }
+                        }
+                    }
+                }
+            }
+        },
         // Round discipline (ask #5): first item rests below the clock, last above the orb bar,
         // horizontal gutter tops rows' own padding up to the safe circle; SLC scaling does falloff.
         // LAYOUT D: the chat passes the measured cluster top edge as the bottom clearance.
@@ -103,7 +150,7 @@ fun ChatScreen(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         item {
-            ChatHeader(voiceEnabled, onToggleVoice, voiceStatus, chatLabel, onOpenChats)
+            ChatCaption(voiceEnabled, voiceStatus, chatLabel)
         }
         if (state.messages.isEmpty() && state.live.isEmpty() && state.approval == null) {
             item {
@@ -113,7 +160,7 @@ fun ChatScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text("Ask Hermes", style = MaterialTheme.typography.title2, textAlign = TextAlign.Center)
-                    Text("press the mic below", style = MaterialTheme.typography.caption3,
+                    Text("tap the orb to talk", style = MaterialTheme.typography.caption3,
                         color = MaterialTheme.colors.onBackground.copy(alpha = 0.5f))
                 }
             }
@@ -149,16 +196,22 @@ fun ChatScreen(
     }
 }
 
+/**
+ * ONE PASSIVE CAPTION LINE (owner batch 3: "would it simplify the interface even more to get all
+ * but the orb button off the main screen?"). The mute chip and the chat-name chip are GONE — mute
+ * is the dial's 1:30 lane and chats is 7:30 — but the state they carried still has to be READABLE:
+ * speak-aloud state (the same glyph the ring shows, so the dial and the caption agree), the chat
+ * name, and any voice/TTS warning in the amber the old chip used. No touch target: tapping here
+ * scrolls the transcript like any other text, which is what a caption should do.
+ */
 @Composable
-private fun ChatHeader(
+private fun ChatCaption(
     enabled: Boolean,
-    onToggle: () -> Unit,
     status: String,
     chatLabel: String,
-    onOpenChats: () -> Unit,
 ) {
-    // The header is item 0 of a Middle-anchored SLC: contentPadding can't keep it below the
-    // clock when content is short, so the header carries the top inset itself (round ask #5).
+    // The caption is item 0 of a Middle-anchored SLC: contentPadding can't keep it below the clock
+    // when content is short, so it carries the top inset itself (round ask #5).
     val insets = roundInsets()
     Row(
         modifier = Modifier
@@ -168,31 +221,17 @@ private fun ChatHeader(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(width = 44.dp, height = 26.dp)
-                .clip(RoundedCornerShape(percent = 50))
-                .background(MaterialTheme.colors.surface.copy(alpha = 0.35f))
-                .clickable(onClick = onToggle),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(if (enabled) "🔊" else "🔇", style = MaterialTheme.typography.body2)
-        }
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(percent = 50))
-                .clickable(onClick = onOpenChats),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                chatLabel.ifEmpty { "💬" },
-                style = MaterialTheme.typography.caption3,
-                color = MaterialTheme.colors.onBackground.copy(alpha = 0.7f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Text(
+            buildString {
+                append(if (enabled) "🔊 " else "🔇 ")
+                append(chatLabel.ifEmpty { "·" })
+            },
+            style = MaterialTheme.typography.caption3,
+            color = MaterialTheme.colors.onBackground.copy(alpha = 0.62f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
         if (status.isNotEmpty()) {
             Text(
                 status,

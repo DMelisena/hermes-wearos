@@ -21,8 +21,13 @@ object SessionHistory {
     /** Same cap the endpoint clamps to: ~120 newest turns on a watch transcript. */
     const val MAX_MESSAGES = 120
 
-    /** Server caps at 2 KB/msg; this is the belt-and-suspenders trim for older watchkits. */
-    const val MAX_TEXT = 2000
+    /**
+     * Belt-and-suspenders trim mirroring watchkit's `MSGS_CONTENT_MAX` (owner: "long replies are
+     * getting cut off … we need the full replies" — the old 2 KB clamp was the whole bug). Chat
+     * answers run to pages now; anything past a 20 KB single message is a log dump the watch
+     * still shows in full, clipped only in the absurd case.
+     */
+    const val MAX_TEXT = 20_000
 
     /** Compression-summary rows render as one assistant line with this marker. */
     const val SUMMARY_PREFIX = "🗂 summary · "
@@ -80,4 +85,27 @@ object SessionHistory {
      */
     fun profileProbes(primary: String): List<String> =
         listOf(primary.trim().ifEmpty { ProfileLogic.PROFILE_COMPUTER }, ProfileLogic.PROFILE_COMPUTER).distinct()
+
+    /**
+     * CATCH-UP PLAN (owner: a session opened on the wrist showed a *half-cut* answer — the desktop
+     * kept talking after the backfill snapshot): returns the gateway turns the local copy has
+     * never seen, to be appended, or null when there is nothing to do. Alignment rides the
+     * longest common PREFIX of (role, text) — local staleness is "the desktop appended", so the
+     * fronts match and the tail is what's new. System rows (the watch's caption/fork notes) don't
+     * participate. Refuses to guess: no anchor (nothing matches with both sides non-empty) or an
+     * empty local transcript (that's [shouldBackfill]'s job — never double-seed). NEVER truncates,
+     * reorders, or deletes a local row.
+     */
+    fun catchUpPlan(gateway: List<ChatMessage>, local: List<ChatMessage>): List<ChatMessage>? {
+        if (gateway.isEmpty() || local.isEmpty()) return null
+        val loc = local.filter { it.role != ChatMessage.Role.System }.map { it.role to it.text }
+        if (loc.isEmpty()) return null
+        var i = 0
+        while (i < gateway.size && i < loc.size &&
+            (gateway[i].role to gateway[i].text) == loc[i]
+        ) i++
+        if (i == 0) return null // unanchored: different windows — refuse rather than dupe
+        if (i == gateway.size) return null // up to date (or the watch is simply ahead)
+        return gateway.subList(i, gateway.size)
+    }
 }

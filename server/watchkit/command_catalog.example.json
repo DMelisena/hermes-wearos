@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "Optional operator catalog for the watch's ⌘ / 6:00 dial overlay (SPEC §12.3).",
+    "cp command_catalog.example.json command_catalog.json and edit; watchkit re-reads it per request.",
+    "Each row declares how the WATCH honors it, because the Runs API does not dispatch slash",
+    "commands — `POST /v1/runs` hands `input` to the model. honored: steer | stop | side | fork |",
+    "model | skill | client | status | prompt  (unknown values degrade to `prompt`, never a crash).",
+    "`requires` names a /v1/capabilities flag; the watch reads the live flags itself (it holds that",
+    "profile's key) and dims a row whose flag is false — watchkit never claims a feature it cannot",
+    "see, so `capabilities` here is only a fallback for a gateway that is unreachable.",
+    "An agent's skills do NOT belong here: watchkit adds them from profiles/<agent>/skills itself."
+  ],
+  "commands": [
+    {
+      "name": "steer",
+      "args": "your guidance",
+      "desc": "inject guidance into the run in flight",
+      "honored": "steer",
+      "group": "commands",
+      "requires": "run_steer"
+    },
+    {
+      "name": "btw",
+      "args": "aside",
+      "desc": "side conversation in a fork — keeps this thread clean",
+      "honored": "side",
+      "group": "commands",
+      "requires": "session_fork"
+    },
+    {
+      "name": "deploy",
+      "args": "service",
+      "desc": "gateway custom: /deploy from this box's CLI (sent to the model as a prompt)",
+      "honored": "prompt",
+      "group": "commands",
+      "source": "ops"
+    }
+  ],
+  "capabilities": {
+    "run_steer": true,
+    "run_stop": true,
+    "session_fork": true
+  }
+}
