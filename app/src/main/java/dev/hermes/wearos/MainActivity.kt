@@ -318,7 +318,7 @@ class MainActivity : ComponentActivity() {
                 val link by deepLink.collectAsState()
                 LaunchedEffect(link) {
                     val l = link ?: return@LaunchedEffect
-                    l.openChat?.let { session.openChat(it); screen = Screen.Chat }
+                    l.openChat?.let { session.openFromNotification(it); screen = Screen.Chat }
                     if (l.talk) {
                         draft = ""; composing = false; speak.stop()
                         if (micGranted.value) startListening(true) else composing = true

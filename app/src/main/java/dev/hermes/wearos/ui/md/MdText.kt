@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
@@ -448,10 +449,17 @@ private fun MdBodyText(
     style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.body2.scaled(),
 ) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    // FOUNDATION Text trap (OWNER BUG: replies went black-on-black): ClickableText lives in
+    // foundation, which never consults LocalContentColor like material Text does — and Wear's
+    // typography styles leave color Unspecified, so every unspanned char fell back to BLACK.
+    // Resolve the theme content color explicitly; spans (links) still override per-range.
+    val base = style.copy(
+        color = style.color.takeOrElse { androidx.wear.compose.material.LocalContentColor.current },
+    )
     ClickableText(
         text = text,
         modifier = modifier,
-        style = style,
+        style = base,
         onClick = { offset ->
             text.getStringAnnotations("hermes.url", (offset - 1).coerceAtLeast(0), offset)
                 .firstOrNull()?.item?.let { url ->

@@ -276,6 +276,25 @@ class ChatSession(
         )
     }
 
+    /**
+     * "OPEN SESSION" from a notification (owner: *"go straight to that session, not just open
+     * the app — it may need to switch agents from wherever the app currently is"*). Same-agent
+     * ids take the plain path; cross-agent ids switch first, then land on THAT chat.
+     */
+    fun openFromNotification(id: String) {
+        scope.launch {
+            store.loadIfNeeded()
+            val meta = store.get(id)
+            val (route, agent) = NotificationDeepLink.plan(settings.profileSync(), meta?.profile ?: "", meta != null)
+            if (route == NotificationDeepLink.Route.SWITCH_THEN_OPEN) {
+                Log.i("HermesWear", "deep link: chat $id lives on '$agent' — switching first")
+                switchAgent(agent) { _, _, _ -> openChat(id) }
+            } else {
+                openChat(id)
+            }
+        }
+    }
+
     /** Continue chat [id] (chats-list tap / dev `open_chat`): persist current, load theirs. */
     fun openChat(id: String) {
         if (id == activeId) return

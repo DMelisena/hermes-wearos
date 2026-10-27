@@ -54,7 +54,11 @@ object Notifs {
     /** Background-settle notification: tap deep-links into the chat's transcript. */
     fun settle(app: Context, chatId: String, label: String, answer: String, error: Boolean) {
         val text = if (error) "⚠ failed" else answer.replace('\n', ' ').trim().take(SNIPPET)
-        post(app, settleId(chatId), CHANNEL_SETTLE, titleFor(label), text, openChatIntent(app, chatId))
+        val n = base(app, CHANNEL_SETTLE, titleFor(label), text)
+            .setContentIntent(openChatIntent(app, chatId))
+            .addAction(R.drawable.ic_stat_hermes, "Open session", openChatIntent(app, chatId))
+            .build()
+        notify(app, settleId(chatId), n)
     }
 
     /** Approval-waiting notification with inline Approve / Deny. */
@@ -63,6 +67,7 @@ object Notifs {
             .setContentIntent(openChatIntent(app, chatId))
             .addAction(R.drawable.ic_stat_hermes, "Approve", responseIntent(app, ACTION_APPROVE, info.runId))
             .addAction(R.drawable.ic_stat_hermes, "Deny", responseIntent(app, ACTION_DENY, info.runId))
+            .addAction(R.drawable.ic_stat_hermes, "Open session", openChatIntent(app, chatId))
         notify(app, approvalId(info.runId), b.build())
     }
 
@@ -101,9 +106,6 @@ object Notifs {
             .putExtra(EXTRA_RUN, runId),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
-
-    private fun post(app: Context, id: Int, channel: String, title: String, text: String, tap: PendingIntent) =
-        notify(app, id, base(app, channel, title, text).setContentIntent(tap).build())
 
     /** The orb spirit on a black disc (drawable-nodpi) — the expanded card shows the real orb.
      *  Decoded once, lazily: webp is small, but a bitmap per post on a watch is still silly. */

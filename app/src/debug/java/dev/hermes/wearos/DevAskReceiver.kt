@@ -211,15 +211,18 @@ class DevAskReceiver : BroadcastReceiver() {
             val n = if (mode.startsWith("reuse")) System.currentTimeMillis() / 86_400_000L
                     else System.currentTimeMillis()
             val m = mode.removePrefix("reuse")
+            // Optional `-e notify_chat <id>`: aim the card + its "Open session" at a REAL chat
+            // (the deep-link beat points at a live session instead of the local demo id).
+            val cid = intent?.getStringExtra("notify_chat")?.takeIf { it.isNotBlank() } ?: "demo-$n"
             if (m != "approval") {
                 dev.hermes.wearos.notify.Notifs.settle(
-                    app, "demo-$n", "wear-demo brief",
+                    app, cid, "wear-demo brief",
                     "Harbor tonight: 8°C, wind SW 12 km/h, aurora KP 6 — the plot is in the chat.", false,
                 )
             }
             if (m != "plain") {
                 dev.hermes.wearos.notify.Notifs.approval(
-                    app, "demo-$n",
+                    app, cid,
                     dev.hermes.wearos.domain.ApprovalInfo(
                         "demo-run-$n", "demo-req-$n",
                         "Send the buyer reply to Hannah? (draft ready)",
