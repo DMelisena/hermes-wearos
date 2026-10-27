@@ -57,22 +57,30 @@ object GatewayModel {
     const val TAILNET_WATCHKIT = "http://hermes.tailnet.ts.net:8651"
     const val LAN_WATCHKIT = "http://192.168.1.50:8651"
 
-    // Stock URLs shipped by the pre-publication builds (the author's own box). Kept in the
-    // "untouched defaults" set so already-installed watches still migrate to the seed instead
-    // of treating the old defaults as a custom host. Split literals keep the public source free
-    // of the original machine name — runtime strings are byte-identical to those builds.
-    private const val LEGACY_TN_API = " http://10" + " .99.88" + " .77:8642"
-    private const val LEGACY_TN_WK = " http://10" + " .99.88" + " .77:8651"
-    private const val LEGACY_ID_API = " http://watch" + ".tail" + " a1b2c3.ts.net:8642"
-    private const val LEGACY_ID_WK = " http://watch" + ".tail" + " a1b2c3.ts.net:8651"
-    private const val LEGACY_LAN_API = "http://10" + ".168" + " .0" + ".42:8642"
-    private const val LEGACY_LAN_WK = "http://10" + ".168" + " .0" + ".42:8651"
+    // Stock URLs shipped by the pre-publication builds (the author's own box) are kept ONLY as
+    // SHA-256 hashes, so neither the original machine name nor its tailnet/LAN addresses appear
+    // anywhere in the public source. Migration treats a hash match as "untouched" exactly like
+    // the plaintext sets did; runtime behavior is unchanged.
+    private val STOCK_API_HASHES = setOf(
+        "b26b44efd05c19faedbd5013d468a3594dd0800b432787e154cfc5ad723b6613",  // pre-publication tailscale IP
+        "bdd7614b75ac97eec1bb40244ee04826c30f7e0f3333d6c491542c807f6295e2",  // pre-publication tailnet FQDN
+        "1c40e2aa2a7527905ed5d5e16f42693e95ddbbc5eee1d6d4a37cdafacd75d430",  // pre-publication LAN IP
+    )
+    private val STOCK_WATCHKIT_HASHES = setOf(
+        "d48bff43b71e37f4520a2a134ce5c47b317429f601999d52646e6d3396a12e56", "0b36e3f4218c9a2145cb26de491c366c07001e322238f3318d6e57021e3dca86", "e69cee7ce67df00905ad523782622d1888dcfeeb022876154c18ddab752ec213",
+    )
 
     /** Stock defaults (all shipped builds) that migration treats as "untouched". */
-    private val STOCK_API =
-        setOf(TAILNET_API, LAN_API, LEGACY_TN_API, LEGACY_ID_API, LEGACY_LAN_API)
-    private val STOCK_WATCHKIT =
-        setOf(TAILNET_WATCHKIT, LAN_WATCHKIT, LEGACY_TN_WK, LEGACY_ID_WK, LEGACY_LAN_WK)
+    private val STOCK_API = setOf(TAILNET_API, LAN_API)
+    private val STOCK_WATCHKIT = setOf(TAILNET_WATCHKIT, LAN_WATCHKIT)
+
+    private fun sha256hex(url: String): String =
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    private fun isStockApi(ep: String) = ep in STOCK_API || sha256hex(ep) in STOCK_API_HASHES
+
+    private fun isStockWatchkit(wk: String) = wk in STOCK_WATCHKIT || sha256hex(wk) in STOCK_WATCHKIT_HASHES
 
     private val json = Json { ignoreUnknownKeys = true }
     private val listSerializer = ListSerializer(Gateway.serializer())
@@ -131,15 +139,15 @@ object GatewayModel {
         val token = legacyToken.trim()
         val ep = normalizeEndpoint(legacyBaseUrl)
         val wk = normalizeEndpoint(legacyWatchkitUrl)
-        if (ep.isEmpty() || ep in STOCK_API) {
+        if (ep.isEmpty() || isStockApi(ep)) {
             val g = seed(token)
-            val withWk = if (wk.isNotEmpty() && wk !in STOCK_WATCHKIT)
+            val withWk = if (wk.isNotEmpty() && !isStockWatchkit(wk))
                 g.copy(watchkitEndpoints = (listOf(wk) + g.watchkitEndpoints).distinct()) else g
             return listOf(withWk) to SEED_ID
         }
         // Custom gateway: the URL the watch actually used leads the endpoint order.
         val apis = (listOf(ep) + DEFAULT_API_ENDPOINTS).distinct()
-        val wkFirst = if (wk.isNotEmpty() && wk !in STOCK_WATCHKIT) wk else derivedWatchkit(ep)
+        val wkFirst = if (wk.isNotEmpty() && !isStockWatchkit(wk)) wk else derivedWatchkit(ep)
         val wks = ((if (wkFirst.isEmpty()) emptyList() else listOf(wkFirst)) + DEFAULT_WATCHKIT_ENDPOINTS).distinct()
         val g = Gateway(id = hostId(ep), label = hostId(ep), apiEndpoints = apis, watchkitEndpoints = wks, token = token)
         return listOf(g) to g.id

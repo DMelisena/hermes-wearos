@@ -4,7 +4,8 @@ import base64, json, re, sys, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 URL = "http://127.0.0.1:30000/v1/chat/completions"
-S = " /run/media/user/Data/dev/hermes-wearos-worktrees/hermes-wearos-orb-dial/docs/screens"
+import os
+S = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "docs", "screens")
 
 CLAIMS = {
  "01-orb-cluster.png": "An app home screen (480x480 screenshot) shows a circular avatar orb at the bottom with several small lane icons arranged around it over a chat background.",
@@ -18,17 +19,17 @@ CLAIMS = {
  "08-sessions.png": "A Sessions screen lists chat sessions newest-first with filter chips (all, wear-dem, computer, archived) and the top row titled 'Harbor aurora dawn patrol formatting'.",
  "09-resumed.png": "A chat screen opened from a notification shows the chat's latest exchange: a user prompt about deleting a file in /tmp and the assistant's settled reply that there was nothing to delete — i.e. the session is shown already up to date.",
  "10-settings-body.png": "A Settings section titled Body tools with toggle rows: Heart rate, Steps & activity, Sleep, Blood oxygen, Location, and a Push now button.",
- "11-gateways.png": "A Gateways settings screen lists two gateway rows ( watchbox and tux-lan  192.168.0.42:8642) with status dots, an add row, and below an Agent keys list with green check marks.",
+ "11-gateways.png": "A Gateways settings screen lists two gateway rows: the first row's host label and IP are pixelated (unreadable) inside a highlighted dark card, the second row shows the readable label tux-lan above a pixelated IP, plus an add row, and below an Agent keys section with green key check marks.",
  "12-keyboard.png": "A watch shows the system QWERTY keyboard with a typed draft 'morning brief at the harbor' above it and suggestion chips plus a blue send button.",
  "13-launcher-icon.png": "A smartwatch app grid where the top-left app icon is a black-and-white engraved spirit girl portrait face (not a generic icon).",
  "14a-fontscale-min.png": "A watch chat shows text at a visibly SMALL font size — multiple lines of an aurora forecast answer fit on screen with a short user chip 'huh'.",
  "14b-fontscale-max.png": "A watch chat shows text at a visibly LARGE font size — only a few short lines fit on screen, including a user chip 'huh'.",
  "15-settings-tail.png": "A settings tail screen shows diagnostics: Location/Push now with 'last push: ok' and 'stt model: present', 'tts engine: Ready', 'version: v0.1.0'.",
  "16-edit-resend.png": "A sheet opened from a sent chat message quotes the message (a prompt about writing exactly 3 short lines) and offers buttons: Edit & resend, Copy, close.",
- "17-agent-picker.png": "An Agents picker screen titled 'Agents on  watchbox' lists agent profile buttons: default, comfyui, elvtr (esp32 cut off).",
- "18-settings-home.png": "A Settings screen titled Settings with a Gateways section showing two saved gateway rows labeled  watchbox (selected, green dot) and tux-lan with IP  192.168.0.42:8642, an add button, and the start of an Agent keys section below.",
+ "17-agent-picker.png": "An Agents picker screen titled 'Agents on' followed by a pixelated unreadable host name lists agent profile buttons: default, comfyui, elvtr (esp32 cut off).",
+ "18-settings-home.png": "A Settings screen titled Settings with a Gateways section showing two saved gateway rows — the first highlighted as selected in a dark card with a pixelated (unreadable) host label and IP, the second labeled tux-lan with a pixelated IP — an add button, and the start of an Agent keys section below.",
  "19-settings-display.png": "A watch Display settings section shows a Markdown rendering toggle on, 'Pinch text x1.00', 'pinch the chat to resize text', 'Orb dial - drag 8 ways - tap a direction to change it', and clock-position rows 12:00 keyboard, 1:30 mute, 3:00 settings.",
- "20-settings-connection.png": "A settings screen shows a Base URL field with an  http://192.168.0.42:8642 URL, a Token field whose value is blurred and unreadable, and Save and Test buttons below.",
+ "20-settings-connection.png": "A settings screen shows a Base URL field with an http URL whose host/IP digits are pixelated (unreadable, port :8642 visible), a Token field whose value is blurred and unreadable, and Save and Test buttons below.",
  "21-session-search.png": "A session search screen with query 'harbor' shows result rows whose snippet text brackets the match like [harbor], with per-agent match counts.",
  "22-session-sheet.png": "A long-press action sheet on a session row shows buttons: fork & open, archive, delete, close.",
  "23-archived-chip.png": "A Sessions screen with the archived filter chip active shows an archived session row titled 'Delete /tmp/harbor-demo.txt using rm'.",

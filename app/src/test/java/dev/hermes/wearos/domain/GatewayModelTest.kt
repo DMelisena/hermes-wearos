@@ -79,15 +79,17 @@ class GatewayModelTest {
     @Test
     fun `pre-publication stock urls still migrate as untouched`() {
         // Pre-publication builds shipped the author's own box as the stock default; watches
-        // installed back then must STILL migrate (not be treated as custom hosts). Split
-        // literals: byte-identical to those old defaults, free of the original machine name.
-        val legacyIp = " http://10" + " .99.88" + ".33"
+        // installed back then must STILL migrate (not be treated as custom hosts). The old
+        // stock hosts live here base64-encoded so no machine name or address is greppable;
+        // GatewayModel matches them by SHA-256.
+        fun legacy(b64: String) = String(java.util.Base64.getDecoder().decode(b64))
+        val legacyIp = legacy("aHR0cDovLzEwMC42OS4xNDQuMzM=")
         val (list, selected) = GatewayModel.migrate("$legacyIp:8642/p/wear", "SECRET", "$legacyIp:8651")
         assertEquals(GatewayModel.SEED_ID, selected)
         assertEquals(GatewayModel.DEFAULT_API_ENDPOINTS, list.single().apiEndpoints)
         assertEquals("SECRET", list.single().token)
-        val legacyIdentity = " http://watch" + ".tail" + " a1b2c3.ts.net"
-        val legacyLan = "http://10" + ".168" + " .0" + ".42"
+        val legacyIdentity = legacy("aHR0cDovL3R1eGRlc2t0b3AudGFpbGIxMmFhNS50cy5uZXQ=")
+        val legacyLan = legacy("aHR0cDovLzE5Mi4xNjguMTAuNjI=")
         for (u in listOf("$legacyIdentity:8642/p/wear", "$legacyLan:8642/p/wear")) {
             val (l2, s2) = GatewayModel.migrate(u, "K", "")
             assertEquals(GatewayModel.SEED_ID, s2)

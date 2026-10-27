@@ -11,7 +11,9 @@ W, H = 1080, 1920
 COBALT = (60, 99, 221)      # #3C63DD
 INKBG = (11, 11, 20, 205)   # #0B0B14 @80%
 PAPER = (232, 232, 242)     # #E8E8F2
-FONT_DIR = " /run/media/user/Data/dev/hermes-wearos-worktrees/devkit/demo/fonts"
+# Art/font locations: env-overridable, default to the folder-local devkit next to the repo.
+_DEVKIT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "devkit", "demo")
+FONT_DIR = os.environ.get("DEMO_FONTS", os.path.join(_DEVKIT, "fonts"))
 
 def font(name, size):
     return ImageFont.truetype(os.path.join(FONT_DIR, name), size)
@@ -27,7 +29,7 @@ def tracked_w(d, text, fnt, track=6):
     return sum(d.textlength(c, font=fnt) + track for c in text) - track
 
 # ---- 1) base canvas: draft-1 harbor cover-cropped, dimmed, vignetted ----
-art = Image.open(" /home/user/.hermes/profiles/comfyui/state/demo-art/draft-1.png").convert("RGB")
+art = Image.open(os.environ.get("DEMO_ART", os.path.join(_DEVKIT, "art", "hero-source.png"))).convert("RGB")
 s = max(W / art.width, H / art.height)
 art = art.resize((int(art.width * s), int(art.height * s)), Image.LANCZOS)
 l, t = (art.width - W) // 2, (art.height - H) // 2
@@ -51,7 +53,7 @@ dm.ellipse((0, 0, D - 1, D - 1), fill=(255, 255, 255, 255))
 mask.save(f"{OUT}/circle.png")
 
 # ---- 2a) splash face: owner-provided art, circle-masked, fills any beat with no capture
-SPLASH = " /run/media/user/Data/dev/hermes-wearos-worktrees/devkit/demo/art/hermes-watch-splash.png"
+SPLASH = os.environ.get("DEMO_SPLASH", os.path.join(_DEVKIT, "art", "hermes-watch-splash.png"))
 sp = Image.open(SPLASH).convert("RGB")
 side = (D - 8) // 2 * 2          # sit inside the white edge ring
 sp = sp.resize((side, side), Image.LANCZOS)

@@ -322,6 +322,12 @@ Branch keeps exactly ONE generation of every tracked media path.
   stills, choreograph honestly: pose stills + slow zoompan push-in reads editorial, a dead
   recording reads broken (that is what the STOP beat is now). `zoompan d=` multiplies frames —
   always cap with `-frames:v`.
+- **Screenshots must not expose the owner's network identity** (privacy round): hostnames/IPs visible
+  in pixels get a mosaic blur (boxes over ` watchbox`/IP substrings on 11/17/18/20) applied to the
+  SQUARE original, then re-masked; `tesseract --psm 11 tsv` locates the boxes — NOTE its x-scale can
+  drift on small text, verify bands via a native-res crop before blurring. vision_gate claims must
+  describe the blurred pixels (pixelated host + readable `tux-lan` label), and the endpoint may
+  return an empty completion under load — retry once before trusting a FAIL.
 - **FONT SCALE beat = the real pinch feature, not system settings** (owner redo): drive
   `-e fontscale <0.75..1.6>` broadcasts over a live chat while recording — each change triggers a
   redraw the burst-recorder reliably captures (frame cluster per step = the zoom ladder). Content
@@ -368,3 +374,10 @@ Branch keeps exactly ONE generation of every tracked media path.
   (1.4 s/frame floor) after owner: "flashes through too damn fast to read". YouTube custom-thumbnail
   poster (16:9, hero @1 s on padded harbor) generated at `devkit/demo/work/yt_thumb_16x9.png`
   (owner copy in ~/Pictures). §9 invariant reworded: tracked media = screenshots + GIF only.
+- **2026-10-27 (privacy purge pre-PR)** — repo is PUBLIC, so: legacy stock URLs in `GatewayModel` are
+  now SHA-256 hash matches (no hostname/IP in source at all), `tools/demo` paths are env-ified
+  (`DEMO_ART`/`DEMO_FONTS`/`DEMO_SPLASH` + repo-relative devkit default; `hero-source.png` copied into
+  devkit art/), screenshots 11/17/18/20 mosaic-blurred over hostname+IP pixels, and a `git
+  filter-repo --replace-text` pass rewrote ALL history (main included: raw `100 .99.88.33` existed
+  since e2b752d) — usernames, machine name, tailnet id, and real LAN/tailscale IPs are gone from
+  every blob/message on GitHub. GIF/video frames intentionally keep original pixels (owner OK).

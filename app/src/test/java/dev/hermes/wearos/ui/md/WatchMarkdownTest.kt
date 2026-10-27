@@ -154,7 +154,7 @@ class WatchMarkdownTest {
         val blocks = WatchMarkdown.parse(text)
         assertEquals(2, blocks.size)
         assertEquals(
-            MdBlock.Image("aurora_map.png", " /home/user/.hermes/profiles/wear-demo/cache/scratch/aurora/aurora_map.png"),
+            MdBlock.Image("aurora_map.png", "/home/user/.hermes/profiles/wear-demo/cache/scratch/aurora/aurora_map.png"),
             blocks[1],
         )
     }
