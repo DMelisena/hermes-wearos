@@ -1,0 +1,50 @@
+# XcodeGen spec for the Apple Watch app (SPEC §14). Generate the project with:
+#   cd apple && xcodegen generate && open HermesWatch.xcodeproj
+# Then set your signing team on the HermesWatch target (Signing & Capabilities).
+name: HermesWatch
+options:
+  bundleIdPrefix: dev.hermes
+  deploymentTarget:
+    watchOS: "10.0"
+  createIntermediateGroups: true
+packages:
+  HermesCore:
+    path: HermesCore
+targets:
+  HermesWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: HermesWatch
+    dependencies:
+      - package: HermesCore
+    info:
+      path: HermesWatch/Info.plist
+      properties:
+        CFBundleDisplayName: Hermes
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        WKApplication: true
+        # Standalone: the watch talks to the gateway itself, no iPhone companion app.
+        WKRunsIndependentlyOfCompanionApp: true
+        # Gateways are plain http on the tailnet (WireGuard-encrypted) or home LAN (SPEC §2).
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: Hermes connects to your own gateway on the home network.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.hermes.watch
+        PRODUCT_NAME: Hermes
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "4"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+schemes:
+  HermesWatch:
+    build:
+      targets:
+        HermesWatch: all
+    run:
+      config: Debug
